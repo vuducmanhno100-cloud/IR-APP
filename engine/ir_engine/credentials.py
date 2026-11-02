@@ -1,8 +1,12 @@
 import os
 import secrets
+import threading
 
 SERVICE = "IRDesktop"
 PG_PASSWORD = "postgres-superuser"
+
+_shared = None
+_shared_lock = threading.Lock()
 
 
 def elk_ref(cluster_key: str) -> str:
@@ -47,6 +51,15 @@ def default_store():
     if os.environ.get("IR_SECRET_BACKEND") == "memory":
         return MemoryStore()
     return KeyringStore()
+
+
+def shared_store():
+    """One store per process, so the API and the sync worker see the same keys (matters for MemoryStore)."""
+    global _shared
+    with _shared_lock:
+        if _shared is None:
+            _shared = default_store()
+        return _shared
 
 
 def get_or_create(store, name: str) -> str:

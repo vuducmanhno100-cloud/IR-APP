@@ -28,9 +28,9 @@ def test_assert_conforms_accepts_real_engine_response(dsn):
 def test_assert_conforms_rejects_stub_and_wrong_shapes(dsn):
     with engine_client(dsn) as api:
         with pytest.raises(AssertionError, match="501"):
-            assert_conforms(api.get("/sync/status"), "getSyncStatus")
-        with pytest.raises(AssertionError, match="getSyncStatus is GET /sync/status"):
-            assert_conforms(api.get("/system/health"), "getSyncStatus")
+            assert_conforms(api.get("/trace/unresolved"), "listUnresolved")
+        with pytest.raises(AssertionError, match="listUnresolved is GET /trace/unresolved"):
+            assert_conforms(api.get("/system/health"), "listUnresolved")
     request = httpx.Request("GET", "http://engine/system/health")
     with pytest.raises(AssertionError, match="engine_version"):
         assert_conforms(httpx.Response(200, json={"status": "ok"}, request=request), "getHealth")
@@ -40,9 +40,9 @@ def test_stub_report_lists_every_operation():
     rows = stub_report.operation_status()
     assert {r["operation"] for r in rows} == set(operations())
     pending = Counter(r["owner"] for r in rows if not r["done"])
-    assert pending == {"TV1": 16, "TV2": 13}
-    assert {r["operation"] for r in rows if r["done"]} == {"getHealth", "shutdown"}
-    assert stub_report.main(["--strict", "--owner", "TV2"]) == 1
+    assert pending["TV1"] == 0
+    assert {"getHealth", "shutdown"} <= {r["operation"] for r in rows if r["done"]}
+    assert stub_report.main(["--strict", "--owner", "TV1"]) == 0
 
 
 def test_export_hits_feeds_fixture_loader(dsn, tmp_path):

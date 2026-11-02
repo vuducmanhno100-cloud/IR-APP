@@ -3,9 +3,12 @@ import socket
 import subprocess
 import sys
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 
 import psycopg
+from psycopg import sql
 
 SUPERUSER = "ir"
 DATABASE = "irdesktop"
@@ -48,12 +51,24 @@ class EmbeddedPostgres:
         suffix = ".exe" if os.name == "nt" else ""
         return str(self.bin_dir / f"{name}{suffix}")
 
-    def _run(self, *args: str, timeout: int = 120) -> subprocess.CompletedProcess:
+    def _run(self, *args: str, timeout: int = 120, env: dict | None = None) -> str:
+        """Run a PostgreSQL tool and return its output.
+
+        Output goes to a temporary file, not a pipe: on Windows `pg_ctl start` hands its inherited handles to the
+        postmaster, which keeps a pipe open for as long as PostgreSQL runs, so reading the pipe until EOF never returns."""
         flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-        result = subprocess.run(args, capture_output=True, text=True, timeout=timeout, creationflags=flags)
+        with tempfile.TemporaryFile() as out:
+            try:
+                result = subprocess.run(
+                    args, stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, timeout=timeout, creationflags=flags, env=env
+                )
+            except subprocess.TimeoutExpired:
+                raise PostgresError(f"{Path(args[0]).name} did not finish within {timeout}s") from None
+            out.seek(0)
+            output = out.read().decode("utf-8", errors="replace").strip()
         if result.returncode != 0:
-            raise PostgresError(f"{Path(args[0]).name} failed: {result.stderr.strip() or result.stdout.strip()}")
-        return result
+            raise PostgresError(f"{Path(args[0]).name} failed: {output}")
+        return output
 
     @property
     def initialized(self) -> bool:
@@ -112,3 +127,33 @@ class EmbeddedPostgres:
             if not exists:
                 conn.execute(f'CREATE DATABASE "{DATABASE}"')
         return self.dsn(password)
+
+    @contextmanager
+    def _password_env(self, password: str) -> Iterator[dict]:
+        """Hand the password to pg_dump/pg_restore through a temporary passfile: never argv or a PGPASSWORD variable."""
+        fd, path = tempfile.mkstemp(prefix="irpass", dir=self.data_dir.parent)
+        escaped = password.replace("\\", "\\\\").replace(":", "\\:")
+        try:
+            with os.fdopen(fd, "w", newline="\n") as f:
+                f.write(f"127.0.0.1:{self.port}:*:{SUPERUSER}:{escaped}\n")
+            yield {**os.environ, "PGPASSFILE": path}
+        finally:
+            os.unlink(path)
+
+    def _client_args(self, dbname: str) -> list[str]:
+        if self.port is None:
+            raise PostgresError("PostgreSQL is not running")
+        return ["-h", "127.0.0.1", "-p", str(self.port), "-U", SUPERUSER, "-d", dbname, "--no-password"]
+
+    def dump(self, password: str, out: Path, dbname: str = DATABASE, timeout: int = 1800) -> Path:
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with self._password_env(password) as env:
+            self._run(self._tool("pg_dump"), *self._client_args(dbname), "-Fc", "-f", str(out), timeout=timeout, env=env)
+        return out
+
+    def restore(self, password: str, dump_file: Path, dbname: str = DATABASE, timeout: int = 3600) -> None:
+        with psycopg.connect(self.dsn(password, "postgres"), autocommit=True) as conn:
+            conn.execute(sql.SQL("DROP DATABASE IF EXISTS {} WITH (FORCE)").format(sql.Identifier(dbname)))
+            conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(dbname)))
+        with self._password_env(password) as env:
+            self._run(self._tool("pg_restore"), *self._client_args(dbname), "--no-owner", "--exit-on-error", str(dump_file), timeout=timeout, env=env)

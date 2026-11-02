@@ -16,6 +16,7 @@ class BackgroundService:
         self._stop = threading.Event()
         self._resume = threading.Event()
         self._resume.set()
+        self._wake = threading.Event()
         self._thread: threading.Thread | None = None
         self._warned_not_implemented = False
         self.last_tick: datetime | None = None
@@ -34,6 +35,7 @@ class BackgroundService:
     def stop(self, timeout: float = 30.0) -> None:
         self._stop.set()
         self._resume.set()
+        self._wake.set()
         if self._thread:
             self._thread.join(timeout)
 
@@ -42,6 +44,14 @@ class BackgroundService:
 
     def resume(self) -> None:
         self._resume.set()
+
+    def wake(self) -> None:
+        """Start the next tick now instead of after interval_s (used by run-now, bootstrap, retry)."""
+        self._wake.set()
+
+    def should_interrupt(self) -> bool:
+        """Long ticks check this between batches so pause and shutdown take effect after the current batch."""
+        return self._stop.is_set() or not self._resume.is_set()
 
     @property
     def state(self) -> str:
@@ -77,7 +87,8 @@ class BackgroundService:
                 delay = self.error_backoff_s
             self.last_tick = datetime.now(timezone.utc)
             if delay:
-                self._stop.wait(delay)
+                self._wake.wait(delay)
+                self._wake.clear()
             else:
                 time.sleep(0)
 
