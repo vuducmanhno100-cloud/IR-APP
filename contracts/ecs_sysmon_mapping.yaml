@@ -1,0 +1,111 @@
+version: 1
+source: >-
+  Elastic Agent + Windows integration 3.x, data stream logs-windows.sysmon_operational-<namespace>.
+  Tên trường lấy từ ingest pipeline sysmon_operational của elastic/integrations (packages/windows).
+  Tra trường bằng ir_engine.ingest.identity.get_path (hỗ trợ cả object lồng nhau và khóa có dấu chấm).
+
+common:
+  event_code: event.code
+  event_time: "@timestamp"
+  ingest_time: event.ingested
+  created_time: event.created
+  host_key: [host.id, agent.id, host.name]
+  host_name: host.name
+  record_id: winlog.record_id
+  channel: winlog.channel
+  canonical_key: sha256(host_key | lower(winlog.channel) | winlog.record_id)
+
+guid_normalization: "bỏ { }, chữ thường: {4A1C...} -> 4a1c..."
+user_format: "user.domain + '\\' + user.name, giữ nguyên hoa/thường để hiển thị; term user lưu chữ thường"
+
+events:
+  "1":
+    name: Process Create
+    process:
+      process_guid: process.entity_id
+      pid: process.pid
+      image: process.executable
+      name: process.name
+      command_line: process.command_line
+      user_name: [user.domain, user.name]
+      integrity_level: winlog.event_data.IntegrityLevel
+      started_at: "@timestamp"
+      attr_source: self
+    parent_placeholder:
+      when: không có process_instances (host_id, process.parent.entity_id)
+      process_guid: process.parent.entity_id
+      pid: process.parent.pid
+      image: process.parent.executable
+      name: process.parent.name
+      command_line: process.parent.command_line
+      user_name: winlog.event_data.ParentUser
+      attr_source: child_event
+      is_placeholder: true
+    edge:
+      parent: process.parent.entity_id
+      child: process.entity_id
+      level: VERIFIED
+      rule_ver: sysmon-eid1-v1
+      evidence_event_id: raw_events.id của event này
+    link: { process: process.entity_id, link_type: create, level: VERIFIED, evidence_rule: guid-match }
+    terms:
+      process_guid: [process.entity_id, process.parent.entity_id]
+      image: [process.executable, process.name, process.parent.executable, process.parent.name]
+      hash: [process.hash.md5, process.hash.sha1, process.hash.sha256, process.pe.imphash]
+      user: [user.domain + "\\" + user.name]
+      command_line: [process.command_line]
+      host: [host.name]
+      event_code: [event.code]
+
+  "3":
+    name: Network connection
+    link: { process: process.entity_id, link_type: network, level: VERIFIED, evidence_rule: guid-match }
+    terms:
+      ip: [source.ip, destination.ip]
+      domain: [source.domain, destination.domain]
+      process_guid: [process.entity_id]
+      image: [process.executable, process.name]
+      user: [user.domain + "\\" + user.name]
+      host: [host.name]
+      event_code: [event.code]
+    summary: "{network.transport} {source.ip}:{source.port} -> {destination.ip}:{destination.port}"
+
+  "5":
+    name: Process terminated
+    process_update: { ended_at: "@timestamp", end_event_id: raw_events.id }
+    link: { process: process.entity_id, link_type: terminate, level: VERIFIED, evidence_rule: guid-match }
+    terms:
+      process_guid: [process.entity_id]
+      image: [process.executable, process.name]
+      host: [host.name]
+      event_code: [event.code]
+
+  "22":
+    name: DNS query
+    link: { process: process.entity_id, link_type: dns, level: VERIFIED, evidence_rule: guid-match }
+    terms:
+      domain: [dns.question.name]
+      ip: [dns.resolved_ip]
+      process_guid: [process.entity_id]
+      image: [process.executable, process.name]
+      host: [host.name]
+      event_code: [event.code]
+    summary: "DNS query {dns.question.name}"
+
+other_event_codes:
+  rule: "Lưu raw, trích terms chung (host, event_code, process_guid nếu có), gắn link 'other' khi có process.entity_id; process_state = CORRELATED hoặc UNLINKED"
+
+alerts:
+  index: ".alerts-security.alerts-<space> (alias) -> .internal.alerts-security.alerts-<space>-*"
+  fields:
+    source_alert_id: kibana.alert.uuid
+    rule_id: kibana.alert.rule.uuid
+    rule_name: kibana.alert.rule.name
+    severity: kibana.alert.severity
+    risk_score: kibana.alert.risk_score
+    status: kibana.alert.workflow_status
+    status_updated_at: kibana.alert.workflow_status_updated_at
+    alert_time: "@timestamp"
+    original_time: kibana.alert.original_time
+    original_event_ref: kibana.alert.ancestors
+  link_to_raw_event: "ancestors[].index (bỏ tiền tố partial-/restored-) + ancestors[].id = raw_events(index_name, elastic_id)"

@@ -1,0 +1,138 @@
+{
+  "api_key_request": {
+    "name": "ir-desktop-<ten-thanh-vien>",
+    "expiration": "30d",
+    "role_descriptors": {
+      "ir_desktop_read": {
+        "cluster": [
+          "monitor"
+        ],
+        "indices": [
+          {
+            "names": [
+              "logs-windows.sysmon_operational-*",
+              ".alerts-security.alerts-*",
+              ".internal.alerts-security.alerts-*"
+            ],
+            "privileges": [
+              "read",
+              "view_index_metadata"
+            ]
+          }
+        ]
+      }
+    },
+    "metadata": {
+      "application": "ir-desktop"
+    }
+  },
+  "has_privileges": {
+    "index": [
+      {
+        "names": [
+          "logs-windows.sysmon_operational-*",
+          ".alerts-security.alerts-*"
+        ],
+        "privileges": [
+          "read",
+          "view_index_metadata"
+        ]
+      }
+    ],
+    "cluster": [
+      "monitor"
+    ]
+  },
+  "open_pit_params": {
+    "keep_alive": "2m",
+    "ignore_unavailable": false
+  },
+  "incremental_search": {
+    "size": 1000,
+    "pit": {
+      "id": "<pit_id>",
+      "keep_alive": "2m"
+    },
+    "query": {
+      "bool": {
+        "filter": [
+          {
+            "range": {
+              "event.ingested": {
+                "gte": "2026-11-02T02:58:00.000Z",
+                "lt": "2026-11-02T03:04:00.000Z",
+                "format": "strict_date_optional_time"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "sort": [
+      {
+        "event.ingested": {
+          "order": "asc"
+        }
+      },
+      {
+        "_shard_doc": "asc"
+      }
+    ],
+    "track_total_hits": false
+  },
+  "alert_status_search": {
+    "size": 500,
+    "pit": {
+      "id": "<pit_id>",
+      "keep_alive": "2m"
+    },
+    "query": {
+      "bool": {
+        "filter": [
+          {
+            "range": {
+              "kibana.alert.workflow_status_updated_at": {
+                "gte": "2026-11-02T02:00:00.000Z",
+                "lt": "2026-11-02T03:00:00.000Z",
+                "format": "strict_date_optional_time"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "sort": [
+      {
+        "kibana.alert.workflow_status_updated_at": {
+          "order": "asc"
+        }
+      },
+      {
+        "_shard_doc": "asc"
+      }
+    ],
+    "track_total_hits": false
+  },
+  "field_caps": {
+    "log": [
+      "@timestamp",
+      "event.ingested",
+      "event.code",
+      "process.entity_id",
+      "process.parent.entity_id",
+      "host.id",
+      "winlog.channel",
+      "winlog.record_id"
+    ],
+    "alert": [
+      "@timestamp",
+      "kibana.alert.uuid",
+      "kibana.alert.rule.name",
+      "kibana.alert.severity",
+      "kibana.alert.workflow_status",
+      "kibana.alert.workflow_status_updated_at",
+      "kibana.alert.original_time",
+      "kibana.alert.ancestors.id"
+    ]
+  }
+}

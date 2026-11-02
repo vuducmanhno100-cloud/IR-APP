@@ -1,0 +1,1313 @@
+openapi: 3.1.0
+info:
+  title: IR Desktop Engine API
+  version: 1.0.0
+  description: |
+    API nội bộ giữa Desktop UI (TV3) và Python engine (TV1, TV2).
+    Engine chỉ nghe 127.0.0.1, cổng động; mọi request mang token phiên.
+    Thời gian luôn là ISO 8601 UTC. Danh sách dùng phân trang cursor.
+servers:
+  - url: http://127.0.0.1:{port}
+    variables:
+      port:
+        default: "4010"
+security:
+  - sessionToken: []
+tags:
+  - name: system
+  - name: config
+  - name: sync
+  - name: storage
+  - name: search
+  - name: trace
+  - name: cases
+
+paths:
+  /system/health:
+    get:
+      tags: [system]
+      operationId: getHealth
+      x-owner: TV1
+      responses:
+        "200":
+          description: Trạng thái engine và database
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+              example:
+                status: ok
+                engine_version: 0.1.0
+                contract_version: 1.0.0
+                db: { status: up, schema_version: 2 }
+                uptime_s: 42
+                workers:
+                  sync: { state: running, last_tick: "2026-11-02T03:30:05Z", last_error: null }
+                  correlation: { state: running, last_tick: "2026-11-02T03:30:07Z", last_error: null }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /system/shutdown:
+    post:
+      tags: [system]
+      operationId: shutdown
+      x-owner: TV1
+      responses:
+        "202":
+          description: Engine dừng sau batch hiện tại
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [accepted]
+                properties:
+                  accepted: { type: boolean }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /config/elk:
+    get:
+      tags: [config]
+      operationId: getElkConnection
+      x-owner: TV1
+      responses:
+        "200":
+          description: Kết nối đang dùng; không bao giờ chứa API key
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ElkConnection" }
+              example:
+                id: 1
+                url: https://elk.lab.local:9200
+                cluster_key: 6qRk3cY1S9u0JmXb2kq0Aw
+                cluster_name: lab-cluster
+                cluster_uuid: 6qRk3cY1S9u0JmXb2kq0Aw
+                es_version: 9.5.5
+                api_key_id: VuaCfGcBCdbkQm-e5aOx
+                api_key_name: ir-desktop-tv1
+                api_key_expires_at: "2026-12-02T00:00:00Z"
+                ca_fingerprint: "a1:b2:c3"
+                state: ACTIVE
+        "409": { $ref: "#/components/responses/NotConfigured" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [config]
+      operationId: saveElkConnection
+      x-owner: TV1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ElkConnectionInput" }
+      responses:
+        "200":
+          description: Đã kiểm tra lại và lưu; API key ghi vào Credential Manager
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ElkConnection" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "502": { $ref: "#/components/responses/ElkError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    delete:
+      tags: [config]
+      operationId: deleteElkConnection
+      x-owner: TV1
+      responses:
+        "204": { description: Đã xóa kết nối và API key; dữ liệu local giữ nguyên }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /config/elk/test:
+    post:
+      tags: [config]
+      operationId: testElkConnection
+      x-owner: TV1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ElkConnectionInput" }
+      responses:
+        "200":
+          description: Kết quả kiểm tra (không lưu gì)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ElkTestResult" }
+              example:
+                ok: true
+                authenticated: { api_key_id: VuaCfGcBCdbkQm-e5aOx, api_key_name: ir-desktop-tv1, username: tv1 }
+                cluster: { cluster_key: 6qRk3cY1S9u0JmXb2kq0Aw, uuid: 6qRk3cY1S9u0JmXb2kq0Aw, name: lab-cluster, version: 9.5.5 }
+                privileges:
+                  - { pattern: "logs-windows.sysmon_operational-*", read: true, view_index_metadata: true }
+                  - { pattern: ".alerts-security.alerts-default", read: true, view_index_metadata: true }
+                fields:
+                  - { pattern: "logs-windows.sysmon_operational-*", field: event.ingested, present: true }
+                  - { pattern: "logs-windows.sysmon_operational-*", field: process.entity_id, present: true }
+                counts:
+                  - { pattern: "logs-windows.sysmon_operational-*", count: 184233 }
+                suggested_sources:
+                  - { name: sysmon, kind: log, index_patterns: ["logs-windows.sysmon_operational-*"], timestamp_strategy: INGESTED, timestamp_field: event.ingested }
+                  - { name: security-alerts, kind: alert, index_patterns: [".alerts-security.alerts-default"], timestamp_strategy: ALERT, timestamp_field: "@timestamp" }
+                warnings: []
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "502": { $ref: "#/components/responses/ElkError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /config/sources:
+    get:
+      tags: [config]
+      operationId: listSources
+      x-owner: TV1
+      responses:
+        "200":
+          description: Danh sách source
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Source" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [config]
+      operationId: replaceSources
+      x-owner: TV1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items: { $ref: "#/components/schemas/SourceInput" }
+      responses:
+        "200":
+          description: Danh sách source sau khi lưu
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Source" }
+        "409": { $ref: "#/components/responses/NotConfigured" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /config/settings:
+    get:
+      tags: [config]
+      operationId: getSettings
+      x-owner: TV1
+      responses:
+        "200":
+          description: Cài đặt hiện tại
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    put:
+      tags: [config]
+      operationId: updateSettings
+      x-owner: TV1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/Settings" }
+      responses:
+        "200":
+          description: Cài đặt sau khi lưu
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Settings" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /sync/status:
+    get:
+      tags: [sync]
+      operationId: getSyncStatus
+      x-owner: TV1
+      responses:
+        "200":
+          description: Trạng thái đồng bộ theo source
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncStatus" }
+              example:
+                scheduler: running
+                sources:
+                  - source_id: 1
+                    name: sysmon
+                    kind: log
+                    state: ACTIVE
+                    ingest_watermark: "2026-11-02T03:30:00Z"
+                    process_watermark: "2026-11-02T03:29:00Z"
+                    lag_s: 95
+                    active_run: null
+                    pending_events: 120
+                    failed_events: 0
+                    last_success: "2026-11-02T03:30:05Z"
+                    last_error: null
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /sync/bootstrap:
+    post:
+      tags: [sync]
+      operationId: startBootstrap
+      x-owner: TV1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from, to]
+              properties:
+                from: { type: string, format: date-time }
+                to: { type: string, format: date-time }
+                source_ids:
+                  type: array
+                  items: { type: integer, format: int64 }
+      responses:
+        "202":
+          description: Các run đã xếp hàng
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunList" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /sync/run-now:
+    post:
+      tags: [sync]
+      operationId: runNow
+      x-owner: TV1
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source_ids:
+                  type: array
+                  items: { type: integer, format: int64 }
+      responses:
+        "202":
+          description: Các run đã xếp hàng
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RunList" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /sync/pause:
+    post:
+      tags: [sync]
+      operationId: pauseSync
+      x-owner: TV1
+      responses:
+        "202": { description: Scheduler tạm dừng sau batch hiện tại }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /sync/resume:
+    post:
+      tags: [sync]
+      operationId: resumeSync
+      x-owner: TV1
+      responses:
+        "202": { description: Scheduler chạy lại }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /sync/retry/{run_id}:
+    post:
+      tags: [sync]
+      operationId: retryRun
+      x-owner: TV1
+      parameters:
+        - $ref: "#/components/parameters/RunId"
+      responses:
+        "202":
+          description: Run mới cho cùng cửa sổ
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SyncRun" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409": { $ref: "#/components/responses/Conflict" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /sync/runs:
+    get:
+      tags: [sync]
+      operationId: listRuns
+      x-owner: TV1
+      parameters:
+        - name: source_id
+          in: query
+          schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Lịch sử run, mới nhất trước
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/SyncRun" }
+                  next_cursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /storage/usage:
+    get:
+      tags: [storage]
+      operationId: getStorageUsage
+      x-owner: TV1
+      responses:
+        "200":
+          description: Dung lượng sử dụng
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StorageUsage" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /search/events:
+    get:
+      tags: [search]
+      operationId: searchEvents
+      x-owner: TV2
+      parameters:
+        - name: type
+          in: query
+          required: true
+          schema: { $ref: "#/components/schemas/TermType" }
+        - name: value
+          in: query
+          required: true
+          schema: { type: string, minLength: 1 }
+        - name: match
+          in: query
+          schema: { $ref: "#/components/schemas/MatchMode" }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - name: host
+          in: query
+          schema: { type: string }
+        - name: event_code
+          in: query
+          schema: { type: string }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Event khớp, mới nhất trước
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SearchResult" }
+              example:
+                items:
+                  - id: 1004
+                    event_time: "2026-10-30T02:15:09.120Z"
+                    host_name: ws-01
+                    event_code: "22"
+                    summary: "DNS query suspicious.example by powershell.exe"
+                    process_id: 3
+                    process_state: CORRELATED
+                    matched_term: { type: domain, value: suspicious.example }
+                next_cursor: null
+                total: 1
+                total_is_approximate: false
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /events/{event_id}:
+    get:
+      tags: [search]
+      operationId: getEvent
+      x-owner: TV2
+      parameters:
+        - $ref: "#/components/parameters/EventId"
+      responses:
+        "200":
+          description: Chi tiết event
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EventDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /alerts:
+    get:
+      tags: [search]
+      operationId: listAlerts
+      x-owner: TV2
+      parameters:
+        - name: severity
+          in: query
+          schema: { $ref: "#/components/schemas/AlertSeverity" }
+        - name: status
+          in: query
+          schema: { $ref: "#/components/schemas/AlertStatus" }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Alert, mới nhất trước
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Alert" }
+                  next_cursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /trace/event/{event_id}:
+    get:
+      tags: [trace]
+      operationId: traceEvent
+      x-owner: TV2
+      parameters:
+        - $ref: "#/components/parameters/EventId"
+        - name: process_id
+          in: query
+          description: Bắt buộc khi lần gọi trước trả về candidates
+          schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/MaxDepth"
+        - $ref: "#/components/parameters/MaxNodes"
+        - name: include_inferred
+          in: query
+          description: Thêm cạnh STRONG/WEAK (hiển thị khác màu)
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Chuỗi tổ tiên + nhánh con của process liên quan
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TraceResult" }
+              example:
+                focus_process_id: 3
+                root_id: 1
+                nodes:
+                  - { id: 1, host_name: ws-01, process_guid: "{4a1c3b2e-0001-6720-0000-001000000001}", pid: 4120, image: "C:\\Windows\\explorer.exe", name: explorer.exe, command_line: "C:\\Windows\\Explorer.EXE", user_name: "LAB\\analyst", started_at: "2026-10-30T01:00:00Z", ended_at: null, is_placeholder: false, attr_source: self, depth: -2, collapsed_children: 14, event_counts: { network: 0, dns: 0, other: 0 } }
+                  - { id: 2, host_name: ws-01, process_guid: "{4a1c3b2e-0002-6720-0000-001000000002}", pid: 5532, image: "C:\\Program Files\\Microsoft Office\\root\\Office16\\WINWORD.EXE", name: WINWORD.EXE, command_line: "\"WINWORD.EXE\" /n invoice.docm", user_name: "LAB\\analyst", started_at: "2026-10-30T02:14:50Z", ended_at: null, is_placeholder: false, attr_source: self, depth: -1, collapsed_children: 0, event_counts: { network: 0, dns: 0, other: 0 } }
+                  - { id: 3, host_name: ws-01, process_guid: "{4a1c3b2e-0003-6720-0000-001000000003}", pid: 6100, image: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe", name: powershell.exe, command_line: "powershell.exe -nop -w hidden -enc SQBFAFgA", user_name: "LAB\\analyst", started_at: "2026-10-30T02:15:02Z", ended_at: null, is_placeholder: false, attr_source: self, depth: 0, collapsed_children: 0, event_counts: { network: 1, dns: 1, other: 0 } }
+                  - { id: 4, host_name: ws-01, process_guid: "{4a1c3b2e-0004-6720-0000-001000000004}", pid: 6240, image: "C:\\Windows\\System32\\cmd.exe", name: cmd.exe, command_line: "cmd.exe /c whoami", user_name: "LAB\\analyst", started_at: "2026-10-30T02:15:20Z", ended_at: "2026-10-30T02:15:21Z", is_placeholder: false, attr_source: self, depth: 1, collapsed_children: 0, event_counts: { network: 0, dns: 0, other: 0 } }
+                edges:
+                  - { id: 1, parent_id: 1, child_id: 2, level: VERIFIED, rule_ver: sysmon-eid1-v1, evidence_event_id: 1001 }
+                  - { id: 2, parent_id: 2, child_id: 3, level: VERIFIED, rule_ver: sysmon-eid1-v1, evidence_event_id: 1002 }
+                  - { id: 3, parent_id: 3, child_id: 4, level: VERIFIED, rule_ver: sysmon-eid1-v1, evidence_event_id: 1006 }
+                matched_event_ids: [1004]
+                related_events:
+                  - { event_id: 1004, process_id: 3, link_type: dns, event_time: "2026-10-30T02:15:09.120Z", event_code: "22", summary: "DNS query suspicious.example" }
+                  - { event_id: 1005, process_id: 3, link_type: network, event_time: "2026-10-30T02:15:10.003Z", event_code: "3", summary: "tcp 10.10.20.15:51522 -> 203.0.113.50:443" }
+                candidates: []
+                completeness: COMPLETE
+                warnings: []
+        "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /trace/expand/{process_id}:
+    get:
+      tags: [trace]
+      operationId: expandProcess
+      x-owner: TV2
+      parameters:
+        - name: process_id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/MaxDepth"
+        - $ref: "#/components/parameters/MaxNodes"
+        - name: include_inferred
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: Nhánh con kế tiếp của node
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/TraceResult" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /trace/unresolved:
+    get:
+      tags: [trace]
+      operationId: listUnresolved
+      x-owner: TV2
+      parameters:
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [OPEN, CONFLICT]
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Quan hệ chưa phân giải hoặc mâu thuẫn
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Unresolved" }
+                  next_cursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /cases:
+    get:
+      tags: [cases]
+      operationId: listCases
+      x-owner: TV2
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: Danh sách case
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_cursor]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: "#/components/schemas/Case" }
+                  next_cursor: { type: [string, "null"] }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    post:
+      tags: [cases]
+      operationId: createCase
+      x-owner: TV2
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CaseInput" }
+      responses:
+        "201":
+          description: Case mới
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Case" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /cases/{case_id}:
+    get:
+      tags: [cases]
+      operationId: getCase
+      x-owner: TV2
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      responses:
+        "200":
+          description: Case và bằng chứng
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CaseDetail" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+    patch:
+      tags: [cases]
+      operationId: updateCase
+      x-owner: TV2
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CasePatch" }
+      responses:
+        "200":
+          description: Case sau khi sửa
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Case" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /cases/{case_id}/items:
+    post:
+      tags: [cases]
+      operationId: addCaseItem
+      x-owner: TV2
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CaseItemInput" }
+      responses:
+        "201":
+          description: Bằng chứng đã ghim
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CaseItem" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "422": { $ref: "#/components/responses/ValidationError" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /cases/{case_id}/items/{item_id}:
+    delete:
+      tags: [cases]
+      operationId: removeCaseItem
+      x-owner: TV2
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+        - name: item_id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "204": { description: Đã bỏ ghim }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+  /cases/{case_id}/export:
+    post:
+      tags: [cases]
+      operationId: exportCase
+      x-owner: TV2
+      parameters:
+        - $ref: "#/components/parameters/CaseId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [format]
+              properties:
+                format: { type: string, enum: [html] }
+      responses:
+        "200":
+          description: File báo cáo đã tạo trong thư mục dữ liệu
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EvidenceFile" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "401": { $ref: "#/components/responses/Unauthorized" }
+
+components:
+  securitySchemes:
+    sessionToken:
+      type: http
+      scheme: bearer
+      description: Token ngẫu nhiên 256 bit do Tauri sinh mỗi phiên, gửi cho engine qua stdin
+
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      schema: { type: string }
+    Limit:
+      name: limit
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 500, default: 100 }
+    EventId:
+      name: event_id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    RunId:
+      name: run_id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    CaseId:
+      name: case_id
+      in: path
+      required: true
+      schema: { type: integer, format: int64 }
+    MaxDepth:
+      name: max_depth
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 20, default: 3 }
+    MaxNodes:
+      name: max_nodes
+      in: query
+      schema: { type: integer, minimum: 10, maximum: 5000, default: 500 }
+
+  responses:
+    Unauthorized:
+      description: Thiếu hoặc sai token phiên
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: ENGINE_UNAUTHORIZED, message: Invalid session token, detail: {}, retryable: false } }
+    NotFound:
+      description: Không tìm thấy
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    NotConfigured:
+      description: Chưa cấu hình kết nối ELK
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: NOT_CONFIGURED, message: ELK connection is not configured, detail: {}, retryable: false } }
+    Conflict:
+      description: Xung đột trạng thái (run đang chạy, scheduler bị chặn...)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ValidationError:
+      description: Tham số không hợp lệ
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+    ElkError:
+      description: Lỗi khi gọi ELK (ELK_UNREACHABLE, ELK_TLS_ERROR, ELK_AUTH_FAILED, ELK_FORBIDDEN, ELK_BAD_REQUEST)
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example: { error: { code: ELK_AUTH_FAILED, message: API key expired or invalidated, detail: { http_status: 401 }, retryable: false } }
+
+  schemas:
+    ErrorCode:
+      type: string
+      enum: [ENGINE_UNAUTHORIZED, VALIDATION_ERROR, NOT_FOUND, NOT_CONFIGURED, NOT_IMPLEMENTED, ELK_UNREACHABLE, ELK_TLS_ERROR, ELK_AUTH_FAILED, ELK_FORBIDDEN, ELK_RATE_LIMITED, ELK_BAD_REQUEST, SYNC_PARTIAL, SYNC_BUSY, STORAGE_QUOTA, DB_UNAVAILABLE, INTERNAL_ERROR]
+    ErrorBody:
+      type: object
+      required: [code, message, detail, retryable]
+      properties:
+        code: { $ref: "#/components/schemas/ErrorCode" }
+        message: { type: string }
+        detail: { type: object, additionalProperties: true }
+        retryable: { type: boolean }
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error: { $ref: "#/components/schemas/ErrorBody" }
+
+    ConnectionState:
+      type: string
+      enum: [ACTIVE, AUTH_FAILED, FORBIDDEN, TLS_ERROR, UNREACHABLE]
+    SourceKind:
+      type: string
+      enum: [log, alert]
+    SourceState:
+      type: string
+      enum: [ACTIVE, PAUSED, AUTH_FAILED, FORBIDDEN, QUOTA_BLOCKED, ERROR]
+    TimestampStrategy:
+      type: string
+      enum: [INGESTED, EVENT_TIME, ALERT]
+    RunType:
+      type: string
+      enum: [BOOTSTRAP, INCREMENTAL, RECONCILE, ALERT_RESYNC]
+    RunStatus:
+      type: string
+      enum: [QUEUED, FETCHING, RAW_COMMITTED, SUCCEEDED, PARTIAL, FAILED, CANCELLED]
+    ProcessState:
+      type: string
+      enum: [PENDING, NORMALIZED, CORRELATED, UNLINKED, FAILED, SKIPPED]
+    EdgeLevel:
+      type: string
+      enum: [VERIFIED, STRONG, WEAK]
+    LinkType:
+      type: string
+      enum: [create, terminate, network, dns, other]
+    AttrSource:
+      type: string
+      enum: [self, child_event]
+    TermType:
+      type: string
+      enum: [ip, domain, hash, process_guid, image, user, host, command_line, event_code]
+    MatchMode:
+      type: string
+      enum: [exact, prefix, suffix, contains, cidr]
+      default: exact
+    Completeness:
+      type: string
+      enum: [COMPLETE, MISSING_PARENT, TRUNCATED, PENDING_DATA]
+    CaseStatus:
+      type: string
+      enum: [OPEN, IN_PROGRESS, CLOSED]
+    CaseItemType:
+      type: string
+      enum: [event, process, tree_snapshot]
+    AlertStatus:
+      type: string
+      enum: [open, acknowledged, closed]
+    AlertSeverity:
+      type: string
+      enum: [low, medium, high, critical]
+
+    Health:
+      type: object
+      required: [status, engine_version, contract_version, db, uptime_s]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        engine_version: { type: string }
+        contract_version: { type: string }
+        db:
+          type: object
+          required: [status, schema_version]
+          properties:
+            status: { type: string, enum: [up, down] }
+            schema_version: { type: [integer, "null"] }
+        uptime_s: { type: integer }
+        workers:
+          type: object
+          description: Trạng thái các background service (sync của TV1, correlation của TV2)
+          additionalProperties: { $ref: "#/components/schemas/WorkerStatus" }
+
+    WorkerStatus:
+      type: object
+      required: [state, last_tick, last_error]
+      properties:
+        state: { type: string, enum: [running, paused, stopped] }
+        last_tick: { type: [string, "null"], format: date-time }
+        last_error: { type: [string, "null"] }
+
+    ElkConnectionInput:
+      type: object
+      required: [url, api_key]
+      properties:
+        url: { type: string, pattern: "^https://" }
+        api_key: { type: string, description: "Giá trị encoded (Base64 của id:api_key)", writeOnly: true }
+        ca_pem: { type: string }
+        ca_fingerprint: { type: string, description: "SHA-256 của CA, dạng hex có hoặc không có dấu :" }
+        cluster_name: { type: string, description: "Bắt buộc khi key không có quyền monitor" }
+        index_patterns:
+          type: object
+          properties:
+            log:
+              type: array
+              items: { type: string }
+            alert:
+              type: array
+              items: { type: string }
+    ElkConnection:
+      type: object
+      required: [id, url, cluster_key, state]
+      properties:
+        id: { type: integer, format: int64 }
+        url: { type: string }
+        cluster_key: { type: string }
+        cluster_name: { type: [string, "null"] }
+        cluster_uuid: { type: [string, "null"] }
+        es_version: { type: [string, "null"] }
+        api_key_id: { type: [string, "null"] }
+        api_key_name: { type: [string, "null"] }
+        api_key_expires_at: { type: [string, "null"], format: date-time }
+        ca_fingerprint: { type: [string, "null"] }
+        state: { $ref: "#/components/schemas/ConnectionState" }
+    ElkTestResult:
+      type: object
+      required: [ok, privileges, fields, counts, suggested_sources, warnings]
+      properties:
+        ok: { type: boolean }
+        authenticated:
+          type: [object, "null"]
+          properties:
+            api_key_id: { type: string }
+            api_key_name: { type: string }
+            username: { type: string }
+        cluster:
+          type: [object, "null"]
+          properties:
+            cluster_key: { type: string }
+            uuid: { type: [string, "null"] }
+            name: { type: [string, "null"] }
+            version: { type: [string, "null"] }
+        privileges:
+          type: array
+          items:
+            type: object
+            required: [pattern, read, view_index_metadata]
+            properties:
+              pattern: { type: string }
+              read: { type: boolean }
+              view_index_metadata: { type: boolean }
+        fields:
+          type: array
+          items:
+            type: object
+            required: [pattern, field, present]
+            properties:
+              pattern: { type: string }
+              field: { type: string }
+              present: { type: boolean }
+        counts:
+          type: array
+          items:
+            type: object
+            required: [pattern, count]
+            properties:
+              pattern: { type: string }
+              count: { type: integer, format: int64 }
+        suggested_sources:
+          type: array
+          items: { $ref: "#/components/schemas/SourceInput" }
+        warnings:
+          type: array
+          items: { type: string }
+        error:
+          oneOf:
+            - { $ref: "#/components/schemas/ErrorBody" }
+            - { type: "null" }
+
+    SourceInput:
+      type: object
+      required: [name, kind, index_patterns, timestamp_strategy, timestamp_field]
+      properties:
+        name: { type: string }
+        kind: { $ref: "#/components/schemas/SourceKind" }
+        index_patterns:
+          type: array
+          minItems: 1
+          items: { type: string }
+        timestamp_strategy: { $ref: "#/components/schemas/TimestampStrategy" }
+        timestamp_field: { type: string }
+        overlap_s: { type: integer, minimum: 0, default: 120 }
+        safety_lag_s: { type: integer, minimum: 0, default: 60 }
+        batch_size: { type: integer, minimum: 100, maximum: 10000, default: 1000 }
+        enabled: { type: boolean, default: true }
+    Source:
+      allOf:
+        - $ref: "#/components/schemas/SourceInput"
+        - type: object
+          required: [id, state]
+          properties:
+            id: { type: integer, format: int64 }
+            state: { $ref: "#/components/schemas/SourceState" }
+
+    Settings:
+      type: object
+      required: [sync_interval_s, quota_bytes, retention_days, reconcile_window_h, alert_resync_days]
+      properties:
+        sync_interval_s: { type: integer, minimum: 60, maximum: 3600 }
+        quota_bytes: { type: integer, format: int64, minimum: 1073741824, maximum: 107374182400 }
+        retention_days: { type: integer, minimum: 1 }
+        reconcile_window_h: { type: integer, minimum: 1, maximum: 168 }
+        alert_resync_days: { type: integer, minimum: 1, maximum: 90 }
+
+    SyncRun:
+      type: object
+      required: [id, source_id, run_type, status, lower_bound, upper_bound, fetched_count, upserted_count, duplicate_skipped]
+      properties:
+        id: { type: integer, format: int64 }
+        source_id: { type: integer, format: int64 }
+        run_type: { $ref: "#/components/schemas/RunType" }
+        status: { $ref: "#/components/schemas/RunStatus" }
+        lower_bound: { type: string, format: date-time }
+        upper_bound: { type: string, format: date-time }
+        started_at: { type: [string, "null"], format: date-time }
+        finished_at: { type: [string, "null"], format: date-time }
+        fetched_count: { type: integer, format: int64 }
+        upserted_count: { type: integer, format: int64 }
+        duplicate_skipped: { type: integer, format: int64 }
+        error_code:
+          oneOf:
+            - { $ref: "#/components/schemas/ErrorCode" }
+            - { type: "null" }
+        error: { type: [string, "null"] }
+    RunList:
+      type: object
+      required: [runs]
+      properties:
+        runs:
+          type: array
+          items: { $ref: "#/components/schemas/SyncRun" }
+    SourceStatus:
+      type: object
+      required: [source_id, name, kind, state, pending_events, failed_events]
+      properties:
+        source_id: { type: integer, format: int64 }
+        name: { type: string }
+        kind: { $ref: "#/components/schemas/SourceKind" }
+        state: { $ref: "#/components/schemas/SourceState" }
+        ingest_watermark: { type: [string, "null"], format: date-time }
+        process_watermark: { type: [string, "null"], format: date-time }
+        lag_s: { type: [integer, "null"] }
+        active_run:
+          oneOf:
+            - { $ref: "#/components/schemas/SyncRun" }
+            - { type: "null" }
+        pending_events: { type: integer, format: int64 }
+        failed_events: { type: integer, format: int64 }
+        last_success: { type: [string, "null"], format: date-time }
+        last_error:
+          type: [object, "null"]
+          properties:
+            code: { $ref: "#/components/schemas/ErrorCode" }
+            message: { type: string }
+            at: { type: string, format: date-time }
+    SyncStatus:
+      type: object
+      required: [scheduler, sources]
+      properties:
+        scheduler: { type: string, enum: [running, paused, blocked] }
+        sources:
+          type: array
+          items: { $ref: "#/components/schemas/SourceStatus" }
+
+    StorageUsage:
+      type: object
+      required: [quota_bytes, used_bytes, percent, threshold_state, breakdown]
+      properties:
+        quota_bytes: { type: integer, format: int64 }
+        used_bytes: { type: integer, format: int64 }
+        percent: { type: number }
+        threshold_state: { type: string, enum: [OK, WARN_70, WARN_80, BLOCK_90] }
+        growth_bytes_per_day: { type: [integer, "null"], format: int64 }
+        breakdown:
+          type: object
+          properties:
+            database: { type: integer, format: int64 }
+            wal: { type: integer, format: int64 }
+            exports: { type: integer, format: int64 }
+            temp: { type: integer, format: int64 }
+
+    EventSummary:
+      type: object
+      required: [id, event_time, event_code, summary, process_state]
+      properties:
+        id: { type: integer, format: int64 }
+        event_time: { type: string, format: date-time }
+        host_name: { type: [string, "null"] }
+        event_code: { type: [string, "null"] }
+        summary: { type: string }
+        process_id: { type: [integer, "null"], format: int64 }
+        process_state: { $ref: "#/components/schemas/ProcessState" }
+        matched_term:
+          type: [object, "null"]
+          properties:
+            type: { $ref: "#/components/schemas/TermType" }
+            value: { type: string }
+    SearchResult:
+      type: object
+      required: [items, next_cursor, total, total_is_approximate]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/EventSummary" }
+        next_cursor: { type: [string, "null"] }
+        total: { type: integer, format: int64 }
+        total_is_approximate: { type: boolean }
+    EventDetail:
+      allOf:
+        - $ref: "#/components/schemas/EventSummary"
+        - type: object
+          required: [source, normalized, payload, linked_processes]
+          properties:
+            ingest_time: { type: [string, "null"], format: date-time }
+            source:
+              type: object
+              required: [cluster_key, index_name, elastic_id]
+              properties:
+                cluster_key: { type: string }
+                index_name: { type: string }
+                elastic_id: { type: string }
+            normalized:
+              type: object
+              additionalProperties: true
+            payload:
+              type: object
+              additionalProperties: true
+            linked_processes:
+              type: array
+              items:
+                type: object
+                required: [process_id, link_type, level]
+                properties:
+                  process_id: { type: integer, format: int64 }
+                  link_type: { $ref: "#/components/schemas/LinkType" }
+                  level: { $ref: "#/components/schemas/EdgeLevel" }
+
+    Alert:
+      type: object
+      required: [event_id, source_alert_id, status, alert_time]
+      properties:
+        event_id: { type: integer, format: int64 }
+        source_alert_id: { type: string }
+        rule_id: { type: [string, "null"] }
+        rule_name: { type: [string, "null"] }
+        severity:
+          oneOf:
+            - { $ref: "#/components/schemas/AlertSeverity" }
+            - { type: "null" }
+        risk_score: { type: [number, "null"] }
+        status: { $ref: "#/components/schemas/AlertStatus" }
+        status_updated_at: { type: [string, "null"], format: date-time }
+        alert_time: { type: string, format: date-time }
+        original_time: { type: [string, "null"], format: date-time }
+        host_name: { type: [string, "null"] }
+        original_event_id: { type: [integer, "null"], format: int64 }
+
+    ProcessNode:
+      type: object
+      required: [id, process_guid, is_placeholder, attr_source, depth, collapsed_children, event_counts]
+      properties:
+        id: { type: integer, format: int64 }
+        host_name: { type: [string, "null"] }
+        process_guid: { type: [string, "null"] }
+        pid: { type: [integer, "null"] }
+        image: { type: [string, "null"] }
+        name: { type: [string, "null"] }
+        command_line: { type: [string, "null"] }
+        user_name: { type: [string, "null"] }
+        started_at: { type: [string, "null"], format: date-time }
+        ended_at: { type: [string, "null"], format: date-time }
+        is_placeholder: { type: boolean }
+        attr_source: { $ref: "#/components/schemas/AttrSource" }
+        depth: { type: integer, description: "Âm: tổ tiên của focus; 0: focus; dương: hậu duệ" }
+        collapsed_children: { type: integer, description: "Số con chưa trả về; UI gọi /trace/expand" }
+        event_counts:
+          type: object
+          required: [network, dns, other]
+          properties:
+            network: { type: integer }
+            dns: { type: integer }
+            other: { type: integer }
+    ProcessEdge:
+      type: object
+      required: [id, parent_id, child_id, level, rule_ver]
+      properties:
+        id: { type: integer, format: int64 }
+        parent_id: { type: integer, format: int64 }
+        child_id: { type: integer, format: int64 }
+        level: { $ref: "#/components/schemas/EdgeLevel" }
+        rule_ver: { type: string }
+        evidence_event_id: { type: [integer, "null"], format: int64 }
+    RelatedEvent:
+      type: object
+      required: [event_id, process_id, link_type, event_time, summary]
+      properties:
+        event_id: { type: integer, format: int64 }
+        process_id: { type: integer, format: int64 }
+        link_type: { $ref: "#/components/schemas/LinkType" }
+        event_time: { type: string, format: date-time }
+        event_code: { type: [string, "null"] }
+        summary: { type: string }
+    TraceResult:
+      type: object
+      required: [focus_process_id, root_id, nodes, edges, matched_event_ids, related_events, candidates, completeness, warnings]
+      properties:
+        focus_process_id: { type: [integer, "null"], format: int64 }
+        root_id: { type: [integer, "null"], format: int64 }
+        nodes:
+          type: array
+          items: { $ref: "#/components/schemas/ProcessNode" }
+        edges:
+          type: array
+          items: { $ref: "#/components/schemas/ProcessEdge" }
+        matched_event_ids:
+          type: array
+          items: { type: integer, format: int64 }
+        related_events:
+          type: array
+          items: { $ref: "#/components/schemas/RelatedEvent" }
+        candidates:
+          type: array
+          description: "Không rỗng khi event liên kết nhiều process; gọi lại với process_id"
+          items: { $ref: "#/components/schemas/ProcessNode" }
+        completeness: { $ref: "#/components/schemas/Completeness" }
+        warnings:
+          type: array
+          items: { type: string }
+
+    Unresolved:
+      type: object
+      required: [id, event_id, relation, reason, status, candidates]
+      properties:
+        id: { type: integer, format: int64 }
+        event_id: { type: integer, format: int64 }
+        host_name: { type: [string, "null"] }
+        relation: { type: string, enum: [parent, process_link] }
+        target_guid: { type: [string, "null"] }
+        reason: { type: string }
+        status: { type: string, enum: [OPEN, RESOLVED, CONFLICT] }
+        candidates:
+          type: array
+          items: { type: object, additionalProperties: true }
+        created_at: { type: string, format: date-time }
+
+    CaseInput:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1 }
+        notes: { type: [string, "null"] }
+    CasePatch:
+      type: object
+      properties:
+        title: { type: string, minLength: 1 }
+        status: { $ref: "#/components/schemas/CaseStatus" }
+        notes: { type: [string, "null"] }
+    Case:
+      type: object
+      required: [id, title, status, created_at, updated_at]
+      properties:
+        id: { type: integer, format: int64 }
+        title: { type: string }
+        status: { $ref: "#/components/schemas/CaseStatus" }
+        notes: { type: [string, "null"] }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    CaseItemInput:
+      type: object
+      required: [item_type]
+      properties:
+        item_type: { $ref: "#/components/schemas/CaseItemType" }
+        ref_id: { type: [integer, "null"], format: int64 }
+        snapshot:
+          oneOf:
+            - { $ref: "#/components/schemas/TraceResult" }
+            - { type: "null" }
+        note: { type: [string, "null"] }
+    CaseItem:
+      allOf:
+        - $ref: "#/components/schemas/CaseItemInput"
+        - type: object
+          required: [id, case_id, pinned_at]
+          properties:
+            id: { type: integer, format: int64 }
+            case_id: { type: integer, format: int64 }
+            pinned_at: { type: string, format: date-time }
+    EvidenceFile:
+      type: object
+      required: [id, case_id, artifact_path, sha256, created_at]
+      properties:
+        id: { type: integer, format: int64 }
+        case_id: { type: integer, format: int64 }
+        artifact_path: { type: string }
+        sha256: { type: string }
+        created_at: { type: string, format: date-time }
+    CaseDetail:
+      allOf:
+        - $ref: "#/components/schemas/Case"
+        - type: object
+          required: [items, files]
+          properties:
+            items:
+              type: array
+              items: { $ref: "#/components/schemas/CaseItem" }
+            files:
+              type: array
+              items: { $ref: "#/components/schemas/EvidenceFile" }
