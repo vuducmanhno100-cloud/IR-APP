@@ -181,6 +181,6 @@ def list_runs(
 
 
 @router.get("/storage/usage", tags=["storage"])
-def get_storage_usage(request: Request, conn: psycopg.Connection = Depends(get_conn)):
+def get_storage_usage(request: Request, conn: psycopg.Connection = Depends(get_conn), now: datetime = Depends(clock)):
     quota = config.get_settings(conn)["quota_bytes"]
-    return usage(conn, getattr(request.app.state, "data_dir", None), quota, with_growth=True)
+    return usage(conn, getattr(request.app.state, "data_dir", None), quota, with_growth=True, now=now)

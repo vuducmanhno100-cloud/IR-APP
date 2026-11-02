@@ -134,12 +134,14 @@ class Handler(BaseHTTPRequestHandler):
         path, query = unquote(url.path), parse_qs(url.query)
         st = self.state
         st.requests.append(f"{method} {path}")
+        # Read the request body before any early error reply: closing a socket with unread data makes Windows
+        # reset the connection, and the client then sees "unreachable" instead of the 401/429 under test.
+        body = self._body()
         if not self._authorized():
             return self._error(401, "unable to authenticate with provided credentials")
         if st.failures:
             status = st.failures.pop(0)
             return self._error(status, f"injected {status}")
-        body = self._body()
         if path == "/" and method in ("GET", "HEAD"):
             if not st.monitor:
                 return self._error(403, "action [cluster:monitor/main] is unauthorized")

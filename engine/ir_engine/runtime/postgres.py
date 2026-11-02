@@ -24,6 +24,12 @@ def free_port() -> int:
         return s.getsockname()[1]
 
 
+def installed_bin_dirs(root: Path) -> list[Path]:
+    """`<root>/<major>/bin`, newest major first: the EnterpriseDB installer layout on Windows, apt on Debian/Ubuntu."""
+    found = [p for p in root.glob("*/bin") if p.parent.name.split(".")[0].isdigit()]
+    return sorted(found, key=lambda p: int(p.parent.name.split(".")[0]), reverse=True)
+
+
 def find_bin_dir(explicit: str | None = None) -> Path:
     candidates = []
     if explicit:
@@ -32,7 +38,9 @@ def find_bin_dir(explicit: str | None = None) -> Path:
         candidates.append(Path(os.environ["IR_PG_BIN"]))
     if getattr(sys, "frozen", False):
         candidates.append(Path(sys.executable).resolve().parent.parent / "pgsql" / "bin")
-    candidates.extend(sorted(Path("/usr/lib/postgresql").glob("*/bin"), reverse=True))
+    elif os.name == "nt":
+        candidates.extend(installed_bin_dirs(Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "PostgreSQL"))
+    candidates.extend(installed_bin_dirs(Path("/usr/lib/postgresql")))
     suffix = ".exe" if os.name == "nt" else ""
     for c in candidates:
         if (c / f"pg_ctl{suffix}").exists():

@@ -17,7 +17,7 @@ from ..elk import queries
 from ..elk.client import make_client
 from ..runtime.services import BackgroundService
 from ..storage import retention
-from ..storage.usage import usage
+from ..storage.usage import record_sample, usage
 from . import access, config, runner
 from .common import utcnow
 
@@ -319,14 +319,18 @@ class SyncScheduler(BackgroundService):
 
     def maintain_storage(self, conn: psycopg.Connection, settings: dict, now: datetime) -> str:
         """Hourly retention; every 10 minutes while usage is at or above 80%."""
-        state = usage(conn, self.data_dir, settings["quota_bytes"])["threshold_state"]
+        current = usage(conn, self.data_dir, settings["quota_bytes"])
+        record_sample(conn, now, current["used_bytes"])
+        state = current["threshold_state"]
         every = RETENTION_PRESSURE_EVERY_S if state in ("WARN_80", "BLOCK_90") else RETENTION_EVERY_S
         if self._last_retention is None or now - self._last_retention >= timedelta(seconds=every):
             deleted = retention.apply(conn, now, settings["retention_days"])
             self._last_retention = now
             if deleted:
                 log.info("retention removed %s events", deleted)
-                state = usage(conn, self.data_dir, settings["quota_bytes"])["threshold_state"]
+                current = usage(conn, self.data_dir, settings["quota_bytes"])
+        record_sample(conn, now, current["used_bytes"])
+        state = current["threshold_state"]
         conn.commit()
         return state
 
