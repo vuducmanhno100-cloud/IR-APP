@@ -23,21 +23,49 @@ class WriteStats:
     indices: dict = field(default_factory=dict)
 
 
-def _upsert_host(cur: psycopg.Cursor, hkey: str, src: dict, seen) -> int:
-    row = cur.execute(
-        """
-        INSERT INTO hosts (host_key, host_name, agent_id, first_seen, last_seen)
-        VALUES (%s, %s, %s, %s, %s)
-        ON CONFLICT (host_key) DO UPDATE SET
-            host_name = COALESCE(EXCLUDED.host_name, hosts.host_name),
-            agent_id = COALESCE(EXCLUDED.agent_id, hosts.agent_id),
-            first_seen = LEAST(hosts.first_seen, EXCLUDED.first_seen),
-            last_seen = GREATEST(hosts.last_seen, EXCLUDED.last_seen)
-        RETURNING id
-        """,
-        (hkey, get_path(src, "host.name"), get_path(src, "agent.id"), seen, seen),
-    ).fetchone()
-    return row["id"] if isinstance(row, dict) else row[0]
+UPSERT_HOST = """
+INSERT INTO hosts (host_key, host_name, agent_id, first_seen, last_seen)
+VALUES (%s, %s, %s, %s, %s)
+ON CONFLICT (host_key) DO UPDATE SET
+    host_name = COALESCE(EXCLUDED.host_name, hosts.host_name),
+    agent_id = COALESCE(EXCLUDED.agent_id, hosts.agent_id),
+    first_seen = LEAST(hosts.first_seen, EXCLUDED.first_seen),
+    last_seen = GREATEST(hosts.last_seen, EXCLUDED.last_seen)
+RETURNING id
+"""
+
+
+@dataclass
+class _HostSeen:
+    first: object
+    last: object
+    name: object = None
+    agent: object = None
+
+
+def _upsert_hosts(cur: psycopg.Cursor, hits: list[dict]) -> dict[str, int]:
+    """One upsert per distinct host in the batch instead of one per hit.
+
+    The resulting row is the same as upserting hit by hit: LEAST/GREATEST are order-free and the last non-null
+    name/agent in batch order wins, exactly like successive COALESCE(EXCLUDED.x, hosts.x)."""
+    seen: dict[str, _HostSeen] = {}
+    for hit in hits:
+        src = hit["_source"]
+        hkey, ts = host_key(src), parse_ts(get_path(src, "@timestamp"))
+        if not (hkey and ts):
+            continue
+        entry = seen.get(hkey)
+        if entry is None:
+            entry = seen[hkey] = _HostSeen(ts, ts)
+        entry.first, entry.last = min(entry.first, ts), max(entry.last, ts)
+        name, agent = get_path(src, "host.name"), get_path(src, "agent.id")
+        entry.name = name if name is not None else entry.name
+        entry.agent = agent if agent is not None else entry.agent
+    ids = {}
+    for hkey, entry in seen.items():
+        row = cur.execute(UPSERT_HOST, (hkey, entry.name, entry.agent, entry.first, entry.last)).fetchone()
+        ids[hkey] = row["id"] if isinstance(row, dict) else row[0]
+    return ids
 
 
 def _base_values(source: SourceRef, hit: dict, host_id, ckey) -> dict:
@@ -116,31 +144,43 @@ def _alert_values(event_id: int, hit: dict) -> dict:
     }
 
 
+def _insert_logs(cur: psycopg.Cursor, rows: list[dict]) -> int:
+    """Pipelined: one network round trip for the whole batch. Rows are applied in order, so a duplicate inside
+    the batch is skipped exactly as before. Returns how many rows were new."""
+    cur.executemany(INSERT_LOG, rows, returning=True)
+    inserted = 0
+    while True:
+        if cur.fetchone() is not None:
+            inserted += 1
+        if not cur.nextset():
+            return inserted
+
+
 def write_hits(conn: psycopg.Connection, source: SourceRef, hits: list[dict]) -> WriteStats:
     stats = WriteStats()
     with conn.transaction(), conn.cursor() as cur:
+        host_ids = _upsert_hosts(cur, hits)
+        logs = []
         for hit in hits:
             stats.fetched += 1
             index = normalize_index(hit["_index"])
             stats.indices[index] = stats.indices.get(index, 0) + 1
             src = hit["_source"]
             hkey = host_key(src)
-            seen = parse_ts(get_path(src, "@timestamp"))
-            host_id = _upsert_host(cur, hkey, src, seen) if hkey and seen else None
+            host_id = host_ids.get(hkey) if hkey else None
             if source.kind == SourceKind.LOG:
-                values = _base_values(source, hit, host_id, canonical_key(src, hkey))
-                if cur.execute(INSERT_LOG, values).fetchone():
-                    stats.inserted += 1
-                else:
-                    stats.duplicates += 1
+                logs.append(_base_values(source, hit, host_id, canonical_key(src, hkey)))
+                continue
+            values = _base_values(source, hit, host_id, None)
+            row = cur.execute(UPSERT_ALERT_EVENT, values).fetchone()
+            event_id = row["id"] if isinstance(row, dict) else row[0]
+            inserted = row["inserted"] if isinstance(row, dict) else row[1]
+            cur.execute(UPSERT_ALERT, _alert_values(event_id, hit))
+            if inserted:
+                stats.inserted += 1
             else:
-                values = _base_values(source, hit, host_id, None)
-                row = cur.execute(UPSERT_ALERT_EVENT, values).fetchone()
-                event_id = row["id"] if isinstance(row, dict) else row[0]
-                inserted = row["inserted"] if isinstance(row, dict) else row[1]
-                cur.execute(UPSERT_ALERT, _alert_values(event_id, hit))
-                if inserted:
-                    stats.inserted += 1
-                else:
-                    stats.updated += 1
+                stats.updated += 1
+        if logs:
+            stats.inserted = _insert_logs(cur, logs)
+            stats.duplicates = len(logs) - stats.inserted
     return stats

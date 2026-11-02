@@ -76,6 +76,12 @@ python -m ir_engine.tools.lab_check --url https://elk.lab:9200 --ca-fingerprint 
 python -m ir_engine.tools.stub_report --owner TV1          # --strict: exit 1 nếu còn 501
 ```
 
+**Đo hiệu năng phần dữ liệu (mục 11.2)** — tự tạo PostgreSQL tạm, sinh event Sysmon, đo ghi raw theo batch, dung lượng và các truy vấn định kỳ:
+
+```
+python -m ir_engine.tools.bench_sync --events 100000       # 10000 / 100000 / 1000000
+```
+
 **Lấy log thật cho TV2** — không cần phần đồng bộ của TV1:
 
 ```
