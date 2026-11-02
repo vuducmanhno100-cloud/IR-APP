@@ -46,9 +46,12 @@ def test_dev_mode_ready_auth_and_stub(engine_env):
         assert set(health["workers"]) == {"sync", "correlation"}
         assert {w["state"] for w in health["workers"].values()} == {"running"}
 
-        stub = httpx.get(f"{base}/sync/status", headers={"Authorization": f"Bearer {token}"})
+        status = httpx.get(f"{base}/sync/status", headers={"Authorization": f"Bearer {token}"})
+        assert status.status_code == 200 and status.json() == {"scheduler": "blocked", "sources": []}
+
+        stub = httpx.get(f"{base}/trace/unresolved", headers={"Authorization": f"Bearer {token}"})
         assert stub.status_code == 501
-        assert stub.json()["error"]["detail"] == {"owner": "TV1", "operation": "getSyncStatus"}
+        assert stub.json()["error"]["detail"] == {"owner": "TV2", "operation": "listUnresolved"}
 
         invalid = httpx.get(f"{base}/search/events", params={"type": "nope", "value": "x"}, headers={"Authorization": f"Bearer {token}"})
         assert invalid.status_code == 422
