@@ -28,7 +28,9 @@ def test_assert_conforms_accepts_real_engine_response(dsn):
 def test_assert_conforms_rejects_stub_and_wrong_shapes(dsn):
     with engine_client(dsn) as api:
         with pytest.raises(AssertionError, match="501"):
-            assert_conforms(api.get("/trace/unresolved"), "listUnresolved")
+            assert_conforms(
+                httpx.Response(501, json={"error": {}}, request=httpx.Request("GET", "http://engine/trace/unresolved")), "listUnresolved"
+            )
         with pytest.raises(AssertionError, match="listUnresolved is GET /trace/unresolved"):
             assert_conforms(api.get("/system/health"), "listUnresolved")
     request = httpx.Request("GET", "http://engine/system/health")
