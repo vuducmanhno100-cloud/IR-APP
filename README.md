@@ -38,6 +38,31 @@ packaging/windows/          bố cục bộ cài, build engine.exe              
 
 ## Bắt đầu
 
+### Clone và chuẩn bị môi trường
+
+Windows PowerShell:
+
+```powershell
+git clone https://github.com/vuducmanhno100-cloud/IR-APP.git
+cd IR-APP
+git switch tv3/desktop-packaging
+```
+
+Nếu repository đã có sẵn, cập nhật nhánh TV3 bằng:
+
+```powershell
+git switch tv3/desktop-packaging
+git pull --ff-only
+```
+
+Các công cụ dùng để chạy đầy đủ dự án:
+
+- Node.js 24.18 trở lên và npm.
+- Python 3.13 để chạy engine và test backend.
+- PostgreSQL 16–18 cho engine; có thể để engine tìm binaries theo cấu hình riêng.
+- Rust toolchain để chạy hoặc build ứng dụng Tauri desktop.
+- Windows 10/11 để kiểm thử bộ cài NSIS.
+
 **Engine** — cần Python 3.13 và PostgreSQL 16–18. Chỉ cần binaries; test tự initdb một cluster tạm. Không chạy bằng root trên Linux.
 
 ```
@@ -89,15 +114,34 @@ python -m ir_engine.tools.export_hits --url https://elk.lab:9200 --ca-fingerprin
 python -m ir_engine fixtures load ..\fixtures\sysmon\lab\logs --kind log
 ```
 
-**Desktop** — Node 22+ (xem thêm `apps/desktop/README.md`):
+**Desktop** — Node 24.18+ (xem thêm `apps/desktop/README.md`):
 
-```
+```powershell
 cd apps/desktop
-npm install
+npm ci
 npm run mock                  # Prism mock ở cổng 4010
-npm run dev                   # mở http://localhost:1420
+npm run dev                   # mở http://127.0.0.1:1420, terminal mock phải chạy cùng lúc
 npm run contract:proxy        # lúc ghép: UI → Prism (4011) → engine thật, báo response lệch contract
 ```
+
+Không có cấu hình nào được commit trong `.env`; khi clone mới, frontend web mặc định gọi Prism mock tại `http://127.0.0.1:4010`. Chạy mock và frontend trong hai terminal riêng. `npm ci` bắt buộc dùng đúng lockfile để tránh lệch phiên bản phụ thuộc.
+
+## Nội dung TV3 đã hoàn thiện
+
+Phần desktop thuộc TV3 hiện có:
+
+- Desktop UI React/Tauri 2 với 10 màn hình điều tra.
+- Điều hướng theo URL, hỗ trợ nút Back và trạng thái loading/empty/error.
+- Client API sinh từ OpenAPI, bearer token, stale-result protection và xử lý envelope lỗi.
+- Khởi chạy engine từ Rust bằng handshake qua stdin/stdout.
+- Kiểm tra phiên bản contract, cơ chế kết nối/token, lifecycle engine và token không truyền qua command line.
+- Cấu hình đóng gói NSIS cho Windows và script build engine/PostgreSQL.
+- Giao diện responsive, bàn phím, focus ring và hỗ trợ reduced motion.
+
+Không sửa `contracts/openapi.yaml`, enum, migration hoặc API backend trong phần TV3. Chi tiết chạy/test nằm tại:
+
+- [`apps/desktop/README.md`](apps/desktop/README.md)
+- [`packaging/windows/README.md`](packaging/windows/README.md)
 
 ## Đã kiểm tra
 

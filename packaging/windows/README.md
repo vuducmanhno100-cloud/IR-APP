@@ -49,7 +49,7 @@ pyinstaller -n ir-engine --onedir --noconsole ^
 
 ## Build tự động bằng script TV3
 
-Chạy trên Windows có Visual Studio Build Tools, Rust toolchain và Node 22:
+Chạy trên Windows có Visual Studio Build Tools, Rust toolchain và Node.js 24.18+:
 
 ```powershell
 cd packaging\windows

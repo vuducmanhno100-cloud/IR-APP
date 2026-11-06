@@ -21,12 +21,36 @@ TV3 làm trên Prism mock, không chờ engine thật. Chỉ chuyển sang engin
 
 ## Chạy
 
-```
-npm install
+Yêu cầu Node.js 24.18+, rồi chạy từ thư mục `apps/desktop`:
+
+```powershell
+npm ci
 npm run gen:api               # sinh lại src/api/schema.d.ts khi contract đổi
-npm run mock                  # Prism mock ở cổng 4010
-npm run dev                   # trình duyệt: http://localhost:1420 (đọc VITE_ENGINE_URL/VITE_ENGINE_TOKEN, mặc định Prism)
 ```
+
+Để chạy frontend trong trình duyệt, mở hai terminal.
+
+Terminal 1 — mock API:
+
+```powershell
+npm run mock
+```
+
+Terminal 2 — frontend:
+
+```powershell
+npm run dev
+```
+
+Sau đó mở `http://127.0.0.1:1420`. Frontend mặc định gọi mock tại `http://127.0.0.1:4010`, nên mock phải đang chạy trước hoặc chạy đồng thời trong terminal khác.
+
+Không commit token hay bí mật vào repository. Nếu cần dùng engine thật trong trình duyệt, tạo từ template:
+
+```powershell
+Copy-Item .env.example .env.development.local
+```
+
+Sau đó sửa `.env.development.local`, không commit file này.
 
 Dùng engine dev thật: chép `.env.example` thành `.env.development.local`, rồi đặt:
 
