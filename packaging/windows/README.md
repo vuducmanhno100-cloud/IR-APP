@@ -46,3 +46,15 @@ pyinstaller -n ir-engine --onedir --noconsole ^
 3. Chiếm sẵn cổng 5432 bằng một PostgreSQL khác, mở lại app.
 4. Kill tiến trình app trong Task Manager, mở lại app.
 5. Gỡ cài đặt, cài lại: dữ liệu trong `%LOCALAPPDATA%\IRDesktop` vẫn còn.
+
+## Build tự động bằng script TV3
+
+Chạy trên Windows có Visual Studio Build Tools, Rust toolchain và Node 22:
+
+```powershell
+cd packaging\windows
+.\build.ps1 -PostgreSqlBin "C:\Program Files\PostgreSQL\18\bin"
+```
+
+Script tạo PyInstaller onedir, kiểm tra đầu ra engine/PostgreSQL rồi gọi Tauri NSIS. PostgreSQL đang được phát hành
+riêng dưới giấy phép PostgreSQL; installer phải chép license của bộ binary nguồn vào thư mục cài đặt.

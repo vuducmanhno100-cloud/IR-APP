@@ -1,6 +1,6 @@
 import { call, engine } from "../api/client";
 import { useLoad } from "../api/useLoad";
-import { Badge, ErrorView, Loading, Section, Time } from "../components/common";
+import { Badge, EmptyState, ErrorView, Loading, Section, Time } from "../components/common";
 
 export function Health() {
   const health = useLoad(async () => call((await engine()).GET("/system/health")), []);
@@ -46,6 +46,7 @@ export function Health() {
           </tbody>
         </table>
       )}
+      {!health.loading && !health.error && !h && <EmptyState title="Engine chưa trả trạng thái">Làm mới để kiểm tra trạng thái engine.</EmptyState>}
     </Section>
   );
 }

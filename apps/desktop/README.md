@@ -63,6 +63,7 @@ Build bộ cài (TV3 tự làm, xem `packaging/windows/README.md`):
 1. Build `ir-engine.exe` từ `engine/`.
 2. Chép PostgreSQL vào `packaging/windows/dist/{engine,pgsql}`.
 3. Chạy `npm run tauri build`.
+4. Cổng/secret chỉ được truyền qua handshake stdin; frontend không cần quyền shell.
 
 ## Kiểm tra trước khi merge
 

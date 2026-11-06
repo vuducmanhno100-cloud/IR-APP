@@ -11,7 +11,9 @@
     "gen:api": "openapi-typescript ../../contracts/openapi.yaml -o src/api/schema.d.ts",
     "mock": "prism mock -p 4010 ../../contracts/openapi.yaml",
     "contract:proxy": "prism proxy -p 4011 --errors ../../contracts/openapi.yaml http://127.0.0.1:8765",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:dev": "tauri dev",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "~2.12.4",

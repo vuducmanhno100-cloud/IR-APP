@@ -2,7 +2,7 @@ import { Background, Controls, MarkerType, ReactFlow, type Edge } from "@xyflow/
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { call, engine, type Schemas } from "../api/client";
 import { useLoad } from "../api/useLoad";
-import { Badge, ErrorView, Loading, Section, Time } from "../components/common";
+import { Badge, EmptyState, ErrorView, Loading, Section, Time } from "../components/common";
 import { layoutTree, mergeTrace, NODE_HEIGHT } from "../tree/layout";
 import { ProcessNodeView, type ProcessFlowNode } from "../tree/ProcessNodeView";
 
@@ -115,7 +115,9 @@ export function ProcessTree({ eventId, onOpenEvent }: { eventId: number; onOpenE
               </ReactFlow>
             )}
           </div>
+          {!view.nodes.length && <EmptyState title="Không có process">Trace không trả về process nào cho event này.</EmptyState>}
           <h3>Event liên quan</h3>
+          {!view.related_events.length && <EmptyState title="Không có event liên quan">Không tìm thấy event con hoặc cha trong cửa sổ hiện tại.</EmptyState>}
           <table>
             <thead>
               <tr>

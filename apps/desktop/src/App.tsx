@@ -40,6 +40,16 @@ export function App() {
   const [route, setRoute] = useState<Route>(initialRoute);
   const [banner, setBanner] = useState<EngineError>();
 
+  const navigate = (next: Route) => {
+    const params = new URLSearchParams();
+    params.set("screen", next.name);
+    if ((next.name === "event" || next.name === "tree") && "eventId" in next) {
+      params.set("event", String(next.eventId));
+    }
+    window.history.pushState(null, "", `${window.location.pathname}?${params.toString()}`);
+    setRoute(next);
+  };
+
   useEffect(
     () =>
       onEngineError((err) => {
@@ -48,35 +58,47 @@ export function App() {
     [],
   );
 
-  const openEvent = (eventId: number) => setRoute({ name: "event", eventId });
-  const openTree = (eventId: number) => setRoute({ name: "tree", eventId });
+  useEffect(() => {
+    const restore = () => setRoute(initialRoute());
+    window.addEventListener("popstate", restore);
+    return () => window.removeEventListener("popstate", restore);
+  }, []);
+
+  const openEvent = (eventId: number) => navigate({ name: "event", eventId });
+  const openTree = (eventId: number) => navigate({ name: "tree", eventId });
 
   return (
     <div className="app">
-      <nav>
+      <nav aria-label="Điều hướng chính">
         <div className="brand">IR Desktop</div>
         {NAV.map((item) => (
-          <button key={item.name} className={route.name === item.name ? "active" : ""} onClick={() => setRoute({ name: item.name } as Route)}>
+          <button
+            key={item.name}
+            type="button"
+            className={route.name === item.name ? "active" : ""}
+            aria-current={route.name === item.name ? "page" : undefined}
+            onClick={() => navigate({ name: item.name } as Route)}
+          >
             {item.label}
           </button>
         ))}
       </nav>
       <main>
         {banner && (
-          <div className="banner">
+          <div className="banner" role="alert">
             <strong>{banner.body.code}</strong> {banner.message}
-            {banner.body.code === "ELK_AUTH_FAILED" && <button onClick={() => setRoute({ name: "wizard" })}>Nhập API key mới</button>}
+            {banner.body.code === "ELK_AUTH_FAILED" && <button onClick={() => navigate({ name: "wizard" })}>Nhập API key mới</button>}
             <button onClick={() => setBanner(undefined)}>Đóng</button>
           </div>
         )}
         {route.name === "health" && <Health />}
-        {route.name === "wizard" && <Wizard onSaved={() => setRoute({ name: "sync" })} />}
+        {route.name === "wizard" && <Wizard onSaved={() => navigate({ name: "sync" })} />}
         {route.name === "sync" && <SyncOverview />}
         {route.name === "search" && <Search onOpenEvent={openEvent} onTrace={openTree} />}
         {route.name === "alerts" && <Alerts onOpenEvent={openEvent} />}
         {route.name === "unresolved" && <Unresolved onOpenEvent={openEvent} />}
         {route.name === "cases" && <Cases />}
-        {route.name === "settings" && <Settings onReconfigure={() => setRoute({ name: "wizard" })} />}
+        {route.name === "settings" && <Settings onReconfigure={() => navigate({ name: "wizard" })} />}
         {route.name === "event" && <EventDetail eventId={route.eventId} onTrace={openTree} />}
         {route.name === "tree" && <ProcessTree eventId={route.eventId} onOpenEvent={openEvent} />}
       </main>
