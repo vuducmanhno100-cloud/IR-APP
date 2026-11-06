@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { call, engine } from "../api/client";
 import { useLoad } from "../api/useLoad";
-import { Badge, ErrorView, Loading, Section, Time } from "../components/common";
+import { Badge, EmptyState, ErrorView, Loading, Section, Time } from "../components/common";
 
 const STATE_TONE = { ACTIVE: "ok", PAUSED: "neutral", AUTH_FAILED: "bad", FORBIDDEN: "bad", QUOTA_BLOCKED: "bad", ERROR: "bad" } as const;
 
@@ -77,6 +77,9 @@ export function SyncOverview() {
             ))}
           </tbody>
         </table>
+      )}
+      {!status.loading && !status.error && !status.data?.sources.length && (
+        <EmptyState title="Chưa cấu hình nguồn đồng bộ">Thêm hoặc cấu hình nguồn ELK để bắt đầu đồng bộ.</EmptyState>
       )}
     </Section>
   );

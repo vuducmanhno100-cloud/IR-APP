@@ -9,21 +9,35 @@ export function ErrorView({ error }: { error: Error | undefined }) {
   }
   const code = error instanceof EngineError ? error.body.code : "ERROR";
   return (
-    <div className="notice error">
+    <div className="notice error" role="alert">
       <strong>{code}</strong> {error.message}
     </div>
   );
 }
 
 export function Loading({ when }: { when: boolean }) {
-  return when ? <div className="muted">Đang tải…</div> : null;
+  return when ? (
+    <div className="loading-state" role="status" aria-live="polite">
+      <span className="spinner" aria-hidden="true" />
+      <span>Đang tải dữ liệu…</span>
+    </div>
+  ) : null;
+}
+
+export function EmptyState({ title, children }: { title: string; children?: ReactNode }) {
+  return (
+    <div className="empty-state">
+      <strong>{title}</strong>
+      {children && <span>{children}</span>}
+    </div>
+  );
 }
 
 export function Section({ title, actions, children }: { title: string; actions?: ReactNode; children: ReactNode }) {
   return (
     <section className="section">
       <header>
-        <h2>{title}</h2>
+        <h1>{title}</h1>
         <div className="actions">{actions}</div>
       </header>
       {children}

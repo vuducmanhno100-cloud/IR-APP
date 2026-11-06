@@ -1,6 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { call, engine, type Schemas } from "../api/client";
-import { Badge, ErrorView, Section } from "../components/common";
+import { Badge, EmptyState, ErrorView, Loading, Section } from "../components/common";
 
 const DEFAULT_LOG = "logs-windows.sysmon_operational-*";
 const DEFAULT_ALERT = ".alerts-security.alerts-default";
@@ -16,6 +16,8 @@ export function Wizard({ onSaved }: { onSaved: () => void }) {
   const [result, setResult] = useState<Schemas["ElkTestResult"]>();
   const [error, setError] = useState<Error>();
   const [busy, setBusy] = useState(false);
+
+  useEffect(() => setResult(undefined), [url, apiKey, fingerprint, caPem, clusterName, logPattern, alertPattern]);
 
   const input = (): Schemas["ElkConnectionInput"] => ({
     url,
@@ -77,13 +79,14 @@ export function Wizard({ onSaved }: { onSaved: () => void }) {
           Index alert
           <input value={alertPattern} onChange={(e) => setAlertPattern(e.target.value)} />
         </label>
-        <div className="row">
-          <button disabled={busy || (!fingerprint && !caPem)}>Kiểm tra</button>
+        <div className="row form-actions">
+          <button disabled={busy}>Kiểm tra</button>
           <button type="button" disabled={busy || !result?.ok} onClick={(e) => act("save", e)}>
             Lưu và bắt đầu đồng bộ
           </button>
         </div>
       </form>
+      <Loading when={busy} />
       <ErrorView error={error} />
       {result && (
         <div className="grid2">
@@ -100,6 +103,7 @@ export function Wizard({ onSaved }: { onSaved: () => void }) {
               </div>
             ))}
           </div>
+          <div className="table-wrap">
           <table>
             <thead>
               <tr>
@@ -120,7 +124,11 @@ export function Wizard({ onSaved }: { onSaved: () => void }) {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
+      )}
+      {!result && !busy && !error && (
+        <EmptyState title="Sẵn sàng kiểm tra kết nối">Nhập kết nối ELK, sau đó kiểm tra quyền truy cập trước khi lưu.</EmptyState>
       )}
     </Section>
   );

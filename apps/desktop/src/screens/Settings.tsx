@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { call, engine, type Schemas } from "../api/client";
 import { useLoad } from "../api/useLoad";
-import { Badge, ErrorView, Section, Time } from "../components/common";
+import { Badge, EmptyState, ErrorView, Loading, Section, Time } from "../components/common";
 
 const GB = 1024 ** 3;
 
@@ -44,24 +44,29 @@ export function Settings({ onReconfigure }: { onReconfigure: () => void }) {
     <>
       <Section title="Kết nối ELK" actions={<button onClick={onReconfigure}>Đổi API key / kết nối</button>}>
         <ErrorView error={connection.error} />
+        <Loading when={connection.loading} />
         {c && (
           <p>
             {c.url} · cluster {c.cluster_name ?? c.cluster_key} ({c.es_version}) · key {c.api_key_name} hết hạn{" "}
             <Time value={c.api_key_expires_at} /> · <Badge tone={c.state === "ACTIVE" ? "ok" : "bad"}>{c.state}</Badge>
           </p>
         )}
+        {!connection.loading && !connection.error && !c && <EmptyState title="Chưa có kết nối ELK">Cấu hình Elasticsearch để bắt đầu thu thập dữ liệu.</EmptyState>}
       </Section>
       <Section title="Dung lượng">
         <ErrorView error={usage.error} />
+        <Loading when={usage.loading} />
         {u && (
           <p>
             {(u.used_bytes / GB).toFixed(1)} / {(u.quota_bytes / GB).toFixed(0)} GB ({u.percent.toFixed(0)}%) ·{" "}
             <Badge tone={u.threshold_state === "OK" ? "ok" : u.threshold_state === "BLOCK_90" ? "bad" : "warn"}>{u.threshold_state}</Badge>
           </p>
         )}
+        {!usage.loading && !usage.error && !u && <EmptyState title="Chưa có dữ liệu dung lượng">Dung lượng lưu trữ chưa được tải.</EmptyState>}
       </Section>
       <Section title="Cài đặt">
         <ErrorView error={settings.error ?? error} />
+        <Loading when={settings.loading} />
         {draft && (
           <form className="form" onSubmit={save}>
             {field("sync_interval_s", "Chu kỳ đồng bộ (giây)")}
@@ -72,6 +77,7 @@ export function Settings({ onReconfigure }: { onReconfigure: () => void }) {
             <button>Lưu</button>
           </form>
         )}
+        {!settings.loading && !settings.error && !draft && <EmptyState title="Không tải được cài đặt">Thử làm mới dữ liệu hoặc kiểm tra kết nối engine.</EmptyState>}
       </Section>
     </>
   );
