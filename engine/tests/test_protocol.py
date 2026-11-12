@@ -2,6 +2,7 @@ import json
 import secrets
 import subprocess
 import sys
+from pathlib import Path
 
 import httpx
 
@@ -88,3 +89,21 @@ def test_bad_handshake_reports_error(engine_env):
     proc, msg = start(engine_env, [], "not-json")
     assert msg["event"] == "error" and msg["code"] == "VALIDATION_ERROR"
     assert proc.wait(timeout=10) == 2
+
+
+def test_entry_file_runs_as_a_plain_script(engine_env):
+    """packaging/windows/build.ps1 hands ir_engine/__main__.py to PyInstaller, which runs it outside the package."""
+    import ir_engine
+
+    entry = Path(ir_engine.__file__).parent / "__main__.py"
+    proc = subprocess.Popen(
+        [sys.executable, str(entry), "serve"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=engine_env,
+    )
+    out, err = proc.communicate("not-json\n", timeout=60)
+    assert json.loads(out.splitlines()[0])["code"] == "VALIDATION_ERROR", err
+    assert proc.returncode == 2

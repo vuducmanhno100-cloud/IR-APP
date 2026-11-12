@@ -15,6 +15,7 @@ from ir_engine.runtime.postgres import EmbeddedPostgres, installed_bin_dirs
 from ir_engine.storage import retention
 from ir_engine.storage import usage as storage_usage
 from ir_engine.storage.usage import threshold_state
+from ir_engine.sync import scheduler as scheduler_module
 from ir_engine.testing.contract import assert_conforms
 from ir_engine.testing.fake_es import FakeElasticsearch
 from ir_engine.tools.bench_sync import events
@@ -80,6 +81,36 @@ def test_quota_blocks_ingest_and_releases_when_raised(h):
     h.tick_until_idle()
     assert {s["state"] for s in h.api.get("/config/sources").json()} == {"ACTIVE"}
     assert h.runs(sysmon)
+
+
+def unreadable_data_folder(*args, **kwargs):
+    raise PermissionError(13, "Access is denied", r"C:\Users\lab\AppData\Local\IRDesktop\exports")
+
+
+def test_sync_continues_when_the_storage_check_fails(h, monkeypatch):
+    monkeypatch.setattr(scheduler_module, "usage", unreadable_data_folder)
+    h.configure()
+    assert h.api.post("/sync/bootstrap", json={"from": iso(DAY_START), "to": iso(NOW)}).status_code == 202
+    h.tick_until_idle()
+    sysmon = h.source_id("sysmon")
+    assert h.one("SELECT count(*) AS n FROM raw_events WHERE source_id = %s", (sysmon,))["n"] == 15
+    assert "PermissionError" in h.scheduler.status()["last_error"]
+
+    monkeypatch.undo()
+    h.clock.advance(minutes=10)
+    h.tick_until_idle()
+    assert h.scheduler.status()["last_error"] is None
+
+
+def test_a_blocked_source_stays_blocked_while_the_storage_check_fails(h, monkeypatch):
+    h.configure()
+    h.execute("UPDATE app_settings SET value = '1048576' WHERE key = 'quota_bytes'")
+    h.tick_until_idle()
+    monkeypatch.setattr(scheduler_module, "usage", unreadable_data_folder)
+    h.clock.advance(minutes=10)
+    h.tick_until_idle()
+    assert {s["state"] for s in h.api.get("/config/sources").json()} == {"QUOTA_BLOCKED"}
+    assert h.runs(h.source_id("sysmon")) == []
 
 
 def insert_old_events(dsn: str, count: int, age: timedelta) -> None:

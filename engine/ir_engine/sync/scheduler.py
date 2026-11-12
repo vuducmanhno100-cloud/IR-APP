@@ -101,9 +101,15 @@ def behind(watermark: datetime, ctx: "SyncContext", lag: timedelta) -> bool:
     return watermark < ctx.now - lag - ctx.interval
 
 
-def reconcile_window(source: dict, cp: dict, settings: dict, now: datetime) -> tuple[datetime, datetime] | None:
-    """Never scan back past local retention, and never ahead of what incremental has already covered."""
-    lower = max(now - timedelta(hours=settings["reconcile_window_h"]), retention.cutoff(now, settings["retention_days"]))
+def reconcile_window(
+    source: dict, cp: dict, settings: dict, now: datetime, synced_from: datetime | None
+) -> tuple[datetime, datetime] | None:
+    """Only the period already synced: never before the first successful incremental or bootstrap run (history the
+    user did not ask for is bootstrap's job; on a first connection this used to pull a whole day and keep bootstrap
+    busy), never past local retention, and never ahead of what incremental has covered."""
+    if synced_from is None:
+        return None
+    lower = max(now - timedelta(hours=settings["reconcile_window_h"]), retention.cutoff(now, settings["retention_days"]), synced_from)
     upper = min(now - timedelta(seconds=source["safety_lag_s"]), cp["ingest_watermark"])
     return (lower, upper) if lower < upper else None
 
@@ -222,7 +228,9 @@ def sync_source(conn: psycopg.Connection, ctx: SyncContext, source: dict) -> boo
             return True
 
     if not ctx.should_stop() and is_due(conn, source["id"], RunType.RECONCILE, ctx.now, timedelta(seconds=RECONCILE_EVERY_S)):
-        window = reconcile_window(source, config.ensure_checkpoint(conn, source["id"]), ctx.settings, ctx.now)
+        window = reconcile_window(
+            source, config.ensure_checkpoint(conn, source["id"]), ctx.settings, ctx.now, runner.synced_since(conn, source["id"])
+        )
         if window:
             run_window(conn, ctx, source, RunType.RECONCILE, window)
     return more
@@ -249,6 +257,8 @@ class SyncScheduler(BackgroundService):
         self._recovered = False
         self._last_retention: datetime | None = None
         self._unvacuumed = 0
+        self._threshold = "OK"
+        self.storage_error: str | None = None
 
     def start(self) -> None:
         try:
@@ -269,7 +279,7 @@ class SyncScheduler(BackgroundService):
                 self._recovered = True
             settings = config.get_settings(conn)
             self.interval_s = float(settings["sync_interval_s"])
-            threshold = self.maintain_storage(conn, settings, now)
+            threshold = self.storage_state(conn, settings, now)
             connection = config.active_connection(conn)
             if connection is None or connection["state"] in BLOCKED_CONNECTION:
                 conn.commit()
@@ -317,6 +327,23 @@ class SyncScheduler(BackgroundService):
             block_connection(conn, connection, ConnectionState.TLS_ERROR, SourceState.ERROR, "stored CA is unusable")
             conn.commit()
             return None
+
+    def storage_state(self, conn: psycopg.Connection, settings: dict, now: datetime) -> str:
+        """A failing storage check (data folder unreadable, VACUUM cancelled) must not stop the sync itself: keep the
+        last known state, which still blocks at 90%, and report the error in /system/health."""
+        try:
+            self._threshold = self.maintain_storage(conn, settings, now)
+            self.storage_error = None
+        except Exception as exc:
+            conn.rollback()
+            log.exception("storage check failed; sync continues with the last known usage state")
+            self.storage_error = f"storage: {type(exc).__name__}: {exc}"
+        return self._threshold
+
+    def status(self) -> dict:
+        status = super().status()
+        status["last_error"] = status["last_error"] or self.storage_error
+        return status
 
     def maintain_storage(self, conn: psycopg.Connection, settings: dict, now: datetime) -> str:
         """Hourly retention; every 10 minutes while usage is at or above 80%. Deleted rows lower usage only once

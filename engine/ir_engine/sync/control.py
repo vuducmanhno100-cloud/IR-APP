@@ -139,18 +139,23 @@ def bootstrap(conn: psycopg.Connection, request: BootstrapRequest, now: datetime
     if lower < oldest:
         raise invalid(f"'from' cũ hơn thời gian lưu giữ ({settings['retention_days']} ngày); dữ liệu sẽ bị xóa ngay", field="from")
     sources = target_sources(conn, connection, request.source_ids)
-    taken = [s["id"] for s in sources if runner.active_run(conn, s["id"]) or config.get_plan(conn, s["id"])]
-    if taken:
-        raise busy("Source đang có run hoặc bootstrap chưa xong", source_ids=taken)
+    planned = [s["id"] for s in sources if config.get_plan(conn, s["id"])]
+    if planned:
+        raise busy("Source đang có bootstrap chưa xong", source_ids=planned)
     runs = []
     for source in sources:
         config.set_plan(conn, source["id"], lower, upper, lower)
         cp = config.ensure_checkpoint(conn, source["id"])
         if cp["ingest_watermark"] is None:
             conn.execute("UPDATE sync_checkpoints SET ingest_watermark = %s WHERE source_id = %s", (upper, source["id"]))
-        if source["state"] == SourceState.ACTIVE:
+        # A source busy with another run (the first incremental starts as soon as sources are saved) keeps its plan;
+        # the scheduler starts the first chunk when that run ends, as it does for a source that is not ACTIVE yet.
+        if source["state"] == SourceState.ACTIVE and not runner.active_run(conn, source["id"]):
             first = min(lower + timedelta(seconds=chunk_span(source)), upper)
-            runs.append(runner.create_run(conn, source["id"], RunType.BOOTSTRAP, lower, first))
+            try:
+                runs.append(runner.create_run(conn, source["id"], RunType.BOOTSTRAP, lower, first))
+            except runner.RunBusy:
+                pass
     audit.record(conn, "sync.bootstrap", "source_configs", {"from": iso(lower), "to": iso(upper), "source_ids": [s["id"] for s in sources]})
     conn.commit()
     return [run_view(r) for r in runs]

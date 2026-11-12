@@ -66,6 +66,8 @@ def normalize(src: dict) -> Normalized:
     domain = get("user.domain")
     if user:
         add("user", f"{domain}\\{user}" if domain else user)
+        # Analysts usually type just the account name; it then matches the account in every domain.
+        add("user", user)
 
     def fields(prefix):
         result = {

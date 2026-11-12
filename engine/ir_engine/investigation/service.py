@@ -1,6 +1,7 @@
 import base64
 import json
-from datetime import datetime
+from datetime import datetime, timezone
+from enum import Enum
 from ipaddress import ip_network
 
 from ..contracts import ErrorCode
@@ -16,6 +17,21 @@ def missing(message="Not found"):
 
 def invalid(message):
     raise ApiError(ErrorCode.VALIDATION_ERROR, message)
+
+
+def utc_json(value):
+    """Every timestamp leaves the engine in UTC with a trailing Z, as the contract says. Rows carry the PostgreSQL
+    session time zone, and the embedded cluster takes the Windows one (+07:00 on a machine set to Vietnam)."""
+    if isinstance(value, datetime):
+        moment = value if value.tzinfo else value.replace(tzinfo=timezone.utc)
+        return moment.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    if isinstance(value, Enum):
+        return value.value
+    if isinstance(value, dict):
+        return {key: utc_json(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [utc_json(item) for item in value]
+    return value
 
 
 def cursor_encode(values):
