@@ -118,6 +118,12 @@ paths:
       tags: [config]
       operationId: testElkConnection
       x-owner: TV1
+      parameters:
+        - name: history_from
+          in: query
+          required: false
+          description: Mốc bắt đầu lấy lịch sử chọn ở bước 5 của wizard; khi có, mỗi phần tử counts kèm history_count
+          schema: { type: string, format: date-time }
       requestBody:
         required: true
         content:
@@ -140,7 +146,7 @@ paths:
                   - { pattern: "logs-windows.sysmon_operational-*", field: event.ingested, present: true }
                   - { pattern: "logs-windows.sysmon_operational-*", field: process.entity_id, present: true }
                 counts:
-                  - { pattern: "logs-windows.sysmon_operational-*", count: 184233 }
+                  - { pattern: "logs-windows.sysmon_operational-*", count: 184233, history_count: 6120 }
                 suggested_sources:
                   - { name: sysmon, kind: log, index_patterns: ["logs-windows.sysmon_operational-*"], timestamp_strategy: INGESTED, timestamp_field: event.ingested }
                   - { name: security-alerts, kind: alert, index_patterns: [".alerts-security.alerts-default"], timestamp_strategy: ALERT, timestamp_field: "@timestamp" }
@@ -961,6 +967,10 @@ components:
             properties:
               pattern: { type: string }
               count: { type: integer, format: int64 }
+              history_count:
+                type: integer
+                format: int64
+                description: Số document từ history_from đến hiện tại theo trường thời gian dùng để đồng bộ; chỉ có khi gửi history_from
         suggested_sources:
           type: array
           items: { $ref: "#/components/schemas/SourceInput" }

@@ -23,6 +23,7 @@ ALERT_SOURCE_NAME = "security-alerts"
 EVENT_TIME_OVERLAP_S = 900
 TREE_FIELDS = {"process.entity_id", "process.parent.entity_id", "host.id"}
 DEDUP_FIELDS = {"winlog.channel", "winlog.record_id"}
+Window = tuple[datetime, datetime] | None
 _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
 # The wizard waits on these calls: one attempt each, so a wrong CA or an unreachable cluster is reported at once
 # (the scheduler's client retries; here an unreachable cluster would take 3 x 30 s).
@@ -138,8 +139,9 @@ def field_presence(es: Elasticsearch, pattern: str, wanted: list[str]) -> list[d
     return [{"pattern": pattern, "field": f, "present": f in present} for f in wanted]
 
 
-def count(es: Elasticsearch, pattern: str) -> int:
-    return int(es.count(index=pattern, ignore_unavailable=True, allow_no_indices=True)["count"])
+def count(es: Elasticsearch, pattern: str, field: str | None = None, window: Window = None) -> int:
+    body = queries.count_body(field, *window) if field and window else {}
+    return int(es.count(index=pattern, ignore_unavailable=True, allow_no_indices=True, **body)["count"])
 
 
 def api_key_expiry(es: Elasticsearch, key_id: str | None) -> datetime | None:
@@ -209,15 +211,18 @@ def _cluster_problems(cluster: dict, findings: _Findings) -> None:
         findings.problem(ErrorCode.ELK_BAD_REQUEST, f"Elasticsearch {version} không được hỗ trợ; ứng dụng cần bản 9.x")
 
 
-def _check_log_pattern(es: Elasticsearch, pattern: str, findings: _Findings, counts: list, fields: list) -> bool:
+def _check_log_pattern(es: Elasticsearch, pattern: str, findings: _Findings, counts: list, fields: list, history: Window) -> bool:
     n = count(es, pattern)
-    counts.append({"pattern": pattern, "count": n})
+    entry = {"pattern": pattern, "count": n, **({"history_count": 0} if history else {})}
+    counts.append(entry)
     if n == 0:
         findings.warnings.append(f"{pattern}: chưa có document nào")
         return True
     rows = field_presence(es, pattern, queries.LOG_REQUIRED_FIELDS)
     fields.extend(rows)
     absent = {r["field"] for r in rows if not r["present"]}
+    if history:
+        entry["history_count"] = count(es, pattern, "@timestamp" if "event.ingested" in absent else "event.ingested", history)
     if "@timestamp" in absent:
         findings.problem(ErrorCode.VALIDATION_ERROR, f"{pattern}: không có trường @timestamp")
     if absent & TREE_FIELDS:
@@ -230,9 +235,11 @@ def _check_log_pattern(es: Elasticsearch, pattern: str, findings: _Findings, cou
     return True
 
 
-def _check_alert_pattern(es: Elasticsearch, pattern: str, findings: _Findings, counts: list, fields: list) -> None:
+def _check_alert_pattern(es: Elasticsearch, pattern: str, findings: _Findings, counts: list, fields: list, history: Window) -> None:
     n = count(es, pattern)
-    counts.append({"pattern": pattern, "count": n})
+    counts.append(
+        {"pattern": pattern, "count": n, **({"history_count": count(es, pattern, "@timestamp", history) if n else 0} if history else {})}
+    )
     if n == 0:
         findings.warnings.append(f"{pattern}: chưa có alert (kiểm tra detection rules hoặc tên space)")
         return
@@ -243,9 +250,10 @@ def _check_alert_pattern(es: Elasticsearch, pattern: str, findings: _Findings, c
         findings.warnings.append(f"{pattern}: thiếu {', '.join(absent)}")
 
 
-def run_test(es: Elasticsearch, target: Target) -> dict:
+def run_test(es: Elasticsearch, target: Target, history: Window = None) -> dict:
     """POST /config/elk/test. Connection-level failures (auth, TLS, network) propagate as errors;
-    everything found after authentication is reported in the result instead."""
+    everything found after authentication is reported in the result instead. With `history` (wizard step 5)
+    each pattern also gets the number of documents a bootstrap of that range would fetch."""
     authenticated = authenticate(es)
     cluster = identify(es, target.cluster_name)
     findings = _Findings()
@@ -259,10 +267,10 @@ def run_test(es: Elasticsearch, target: Target) -> dict:
     ingested = True
     for pattern in target.log_patterns:
         if pattern not in missing:
-            ingested = _guarded(findings, lambda p=pattern: _check_log_pattern(es, p, findings, counts, fields), True) and ingested
+            ingested = _guarded(findings, lambda p=pattern: _check_log_pattern(es, p, findings, counts, fields, history), True) and ingested
     for pattern in target.alert_patterns:
         if pattern not in missing:
-            _guarded(findings, lambda p=pattern: _check_alert_pattern(es, p, findings, counts, fields), None)
+            _guarded(findings, lambda p=pattern: _check_alert_pattern(es, p, findings, counts, fields, history), None)
     return {
         "ok": not findings.problems,
         "authenticated": authenticated,

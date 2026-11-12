@@ -1,7 +1,7 @@
 import socket
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from elastic_transport import TransportError
@@ -15,7 +15,7 @@ from ir_engine.testing.contract import assert_conforms
 from ir_engine.testing.fake_es import FakeElasticsearch, FakeState
 
 from .conftest import FIXTURES
-from .tv1_support import API_KEY, NOW, Clock, Harness, connection_input
+from .tv1_support import API_KEY, NOW, Clock, Harness, connection_input, iso
 
 
 @pytest.fixture
@@ -41,6 +41,28 @@ def test_get_connection_before_configuration_is_not_configured(h):
     response = h.api.get("/config/elk")
     assert_conforms(response, "getElkConnection")
     assert response.status_code == 409 and response.json()["error"]["code"] == "NOT_CONFIGURED"
+
+
+def test_connection_test_estimates_the_history_range(h):
+    """Wizard step 5: how many documents a bootstrap from the chosen moment until now would fetch."""
+
+    def history_counts(history_from=None):
+        params = {"history_from": iso(history_from)} if history_from else {}
+        response = h.api.post("/config/elk/test", params=params, json=connection_input())
+        assert_conforms(response, "testElkConnection")
+        return {c["pattern"]: c.get("history_count") for c in response.json()["counts"]}
+
+    logs, alerts = "logs-windows.sysmon_operational-*", ".alerts-security.alerts-default"
+    assert history_counts() == {logs: None, alerts: None}
+    assert history_counts(NOW - timedelta(hours=24)) == {logs: 18, alerts: 2}
+    # Logs count by event.ingested, alerts by @timestamp (02:20 and 02:25), as the bootstrap fetches them.
+    moment = datetime(2026, 10, 30, 2, 22, tzinfo=timezone.utc)
+    late_logs = [d for d in h.fake.state.docs if d["_index"].startswith(".ds-logs-") and d["_source"]["event"]["ingested"] >= iso(moment)]
+    assert history_counts(moment) == {logs: len(late_logs), alerts: 1} and len(late_logs) < 18
+    for bad in (iso(NOW + timedelta(hours=1)), "2026-10-30T00:00:00"):
+        response = h.api.post("/config/elk/test", params={"history_from": bad}, json=connection_input())
+        assert_conforms(response, "testElkConnection")
+        assert response.status_code == 422
 
 
 def test_connection_test_reports_cluster_privileges_fields_and_sources(h):

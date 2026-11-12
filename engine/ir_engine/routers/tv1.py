@@ -2,6 +2,7 @@ from datetime import datetime
 
 import psycopg
 from fastapi import APIRouter, Body, Depends, Query, Request, Response
+from pydantic import AwareDatetime
 
 from .. import audit
 from ..auth import require_token
@@ -13,7 +14,7 @@ from ..runtime.services import ServiceManager
 from ..schemas import ElkConnectionInput, Settings, SourceInput
 from ..storage.usage import usage
 from ..sync import config, control
-from ..sync.common import parse_body, utcnow
+from ..sync.common import invalid, parse_body, utcnow
 
 router = APIRouter(dependencies=[Depends(require_token)])
 
@@ -81,10 +82,17 @@ def delete_elk_connection(conn: psycopg.Connection = Depends(get_conn), store=De
 
 
 @router.post("/config/elk/test", tags=["config"])
-def test_elk_connection(body: dict = Body(...), factory=Depends(client_factory)):
+def test_elk_connection(
+    body: dict = Body(...),
+    history_from: AwareDatetime | None = Query(None),
+    factory=Depends(client_factory),
+    now: datetime = Depends(clock),
+):
     target = probe.Target.from_input(parse_body(ElkConnectionInput, body))
+    if history_from is not None and history_from >= now:
+        raise invalid("'history_from' phải ở trước thời điểm hiện tại", field="history_from")
     with probe.open_client(factory, target) as es:
-        return probe.run_test(es, target)
+        return probe.run_test(es, target, (history_from, now) if history_from else None)
 
 
 @router.get("/config/sources", tags=["config"])
