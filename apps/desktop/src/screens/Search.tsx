@@ -64,53 +64,55 @@ export function Search({ onOpenEvent, onTrace }: Props) {
             {result.total}
             {result.total_is_approximate ? "+" : ""} kết quả
           </div>
-          <table>
-            <thead>
-              <tr>
-                <th>Thời gian</th>
-                <th>Host</th>
-                <th>Event</th>
-                <th>Nội dung</th>
-                <th>Trạng thái</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {result.items.length === 0 && (
+          <div className="table-wrap">
+            <table>
+              <thead>
                 <tr>
-                  <td colSpan={6}>
-                    <EmptyState title="Không tìm thấy sự kiện">Thử thay đổi giá trị hoặc chế độ khớp.</EmptyState>
-                  </td>
+                  <th>Thời gian</th>
+                  <th>Host</th>
+                  <th>Event</th>
+                  <th>Nội dung</th>
+                  <th>Trạng thái</th>
+                  <th />
                 </tr>
-              )}
-              {result.items.map((item) => (
-                <tr key={item.id}>
-                  <td>
-                    <Time value={item.event_time} />
-                  </td>
-                  <td>{item.host_name}</td>
-                  <td>{item.event_code}</td>
-                  <td>{item.summary}</td>
-                  <td>
-                    <Badge tone={item.process_state === "UNLINKED" ? "warn" : "neutral"}>{item.process_state}</Badge>
-                  </td>
-                  <td>
-                    {item.process_id !== null && item.process_id !== undefined && (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onTrace(item.id);
-                        }}
-                      >
-                        Mở cây
-                      </button>
-                    )}
-                    <button onClick={() => onOpenEvent(item.id)}>Chi tiết</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {result.items.length === 0 && (
+                  <tr>
+                    <td colSpan={6}>
+                      <EmptyState title="Không tìm thấy sự kiện">Thử thay đổi giá trị hoặc chế độ khớp.</EmptyState>
+                    </td>
+                  </tr>
+                )}
+                {result.items.map((item) => (
+                  <tr key={item.id}>
+                    <td>
+                      <Time value={item.event_time} />
+                    </td>
+                    <td className="nowrap">{item.host_name}</td>
+                    <td className="nowrap">{item.event_code}</td>
+                    <td className="overflow-cell">{item.summary}</td>
+                    <td>
+                      <Badge tone={item.process_state === "UNLINKED" ? "warn" : "neutral"}>{item.process_state}</Badge>
+                    </td>
+                    <td className="nowrap">
+                      {item.process_id !== null && item.process_id !== undefined && (
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onTrace(item.id);
+                          }}
+                        >
+                          Mở cây
+                        </button>
+                      )}
+                      <button onClick={() => onOpenEvent(item.id)}>Chi tiết</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           {result.next_cursor && (
             <button onClick={(e) => run(e, result.next_cursor ?? undefined)} disabled={busy}>
               Tải thêm
