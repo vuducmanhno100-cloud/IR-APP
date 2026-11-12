@@ -50,8 +50,8 @@ def test_dev_mode_ready_auth_and_stub(engine_env):
         assert status.status_code == 200 and status.json() == {"scheduler": "blocked", "sources": []}
 
         stub = httpx.get(f"{base}/trace/unresolved", headers={"Authorization": f"Bearer {token}"})
-        assert stub.status_code == 501
-        assert stub.json()["error"]["detail"] == {"owner": "TV2", "operation": "listUnresolved"}
+        assert stub.status_code == 200
+        assert stub.json() == {"items": [], "next_cursor": None}
 
         invalid = httpx.get(f"{base}/search/events", params={"type": "nope", "value": "x"}, headers={"Authorization": f"Bearer {token}"})
         assert invalid.status_code == 422

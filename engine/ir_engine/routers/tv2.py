@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Body, Depends, Query
+from fastapi import APIRouter, Body, Depends, Query, Request
 
 from ..auth import require_token
 from ..contracts import AlertSeverity, AlertStatus, MatchMode, TermType
-from ..errors import not_implemented
+from ..deps import get_conn
+from ..investigation import cases, service
+from ..schemas import CaseInput, CaseItemInput, CasePatch
 
 OWNER = "TV2"
 
@@ -20,13 +22,14 @@ def search_events(
     event_code: str | None = None,
     cursor: str | None = None,
     limit: int = Query(100, ge=1, le=500),
+    conn=Depends(get_conn),
 ):
-    raise not_implemented(OWNER, "searchEvents")
+    return service.search(conn, type, value, match, from_, to, host, event_code, cursor, limit)
 
 
 @router.get("/events/{event_id}", tags=["search"])
-def get_event(event_id: int):
-    raise not_implemented(OWNER, "getEvent")
+def get_event(event_id: int, conn=Depends(get_conn)):
+    return service.event(conn, event_id)
 
 
 @router.get("/alerts", tags=["search"])
@@ -37,8 +40,9 @@ def list_alerts(
     to: str | None = None,
     cursor: str | None = None,
     limit: int = Query(100, ge=1, le=500),
+    conn=Depends(get_conn),
 ):
-    raise not_implemented(OWNER, "listAlerts")
+    return service.alerts(conn, severity, status, from_, to, cursor, limit)
 
 
 @router.get("/trace/event/{event_id}", tags=["trace"])
@@ -48,8 +52,9 @@ def trace_event(
     max_depth: int = Query(3, ge=1, le=20),
     max_nodes: int = Query(500, ge=10, le=5000),
     include_inferred: bool = False,
+    conn=Depends(get_conn),
 ):
-    raise not_implemented(OWNER, "traceEvent")
+    return service.trace(conn, event_id, process_id, max_depth, max_nodes, include_inferred)
 
 
 @router.get("/trace/expand/{process_id}", tags=["trace"])
@@ -58,45 +63,48 @@ def expand_process(
     max_depth: int = Query(3, ge=1, le=20),
     max_nodes: int = Query(500, ge=10, le=5000),
     include_inferred: bool = False,
+    conn=Depends(get_conn),
 ):
-    raise not_implemented(OWNER, "expandProcess")
+    return service.trace(
+        conn, process_id=process_id, max_depth=max_depth, max_nodes=max_nodes, include_inferred=include_inferred, expand=True
+    )
 
 
 @router.get("/trace/unresolved", tags=["trace"])
-def list_unresolved(status: str | None = None, cursor: str | None = None, limit: int = Query(100, ge=1, le=500)):
-    raise not_implemented(OWNER, "listUnresolved")
+def list_unresolved(status: str | None = None, cursor: str | None = None, limit: int = Query(100, ge=1, le=500), conn=Depends(get_conn)):
+    return service.unresolved_list(conn, status, cursor, limit)
 
 
 @router.get("/cases", tags=["cases"])
-def list_cases(cursor: str | None = None, limit: int = Query(100, ge=1, le=500)):
-    raise not_implemented(OWNER, "listCases")
+def list_cases(cursor: str | None = None, limit: int = Query(100, ge=1, le=500), conn=Depends(get_conn)):
+    return cases.listing(conn, cursor, limit)
 
 
 @router.post("/cases", tags=["cases"], status_code=201)
-def create_case(body: dict = Body(...)):
-    raise not_implemented(OWNER, "createCase")
+def create_case(body: CaseInput, conn=Depends(get_conn)):
+    return cases.create(conn, body)
 
 
 @router.get("/cases/{case_id}", tags=["cases"])
-def get_case(case_id: int):
-    raise not_implemented(OWNER, "getCase")
+def get_case(case_id: int, conn=Depends(get_conn)):
+    return cases.get(conn, case_id)
 
 
 @router.patch("/cases/{case_id}", tags=["cases"])
-def update_case(case_id: int, body: dict = Body(...)):
-    raise not_implemented(OWNER, "updateCase")
+def update_case(case_id: int, body: CasePatch, conn=Depends(get_conn)):
+    return cases.update(conn, case_id, body)
 
 
 @router.post("/cases/{case_id}/items", tags=["cases"], status_code=201)
-def add_case_item(case_id: int, body: dict = Body(...)):
-    raise not_implemented(OWNER, "addCaseItem")
+def add_case_item(case_id: int, body: CaseItemInput, conn=Depends(get_conn)):
+    return cases.add(conn, case_id, body)
 
 
 @router.delete("/cases/{case_id}/items/{item_id}", tags=["cases"], status_code=204)
-def remove_case_item(case_id: int, item_id: int):
-    raise not_implemented(OWNER, "removeCaseItem")
+def remove_case_item(case_id: int, item_id: int, conn=Depends(get_conn)):
+    return cases.remove(conn, case_id, item_id)
 
 
 @router.post("/cases/{case_id}/export", tags=["cases"])
-def export_case(case_id: int, body: dict = Body(...)):
-    raise not_implemented(OWNER, "exportCase")
+def export_case(case_id: int, request: Request, body: dict = Body(...), conn=Depends(get_conn)):
+    return cases.export(conn, case_id, body, data_dir=getattr(request.app.state, "data_dir", None))
