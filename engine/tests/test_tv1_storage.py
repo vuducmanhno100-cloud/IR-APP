@@ -1,6 +1,6 @@
 import sys
 import time
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import psycopg
 import pytest
@@ -8,12 +8,16 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from ir_engine import fixtures
+from ir_engine.contracts import SourceKind
+from ir_engine.ingest.writer import write_hits
 from ir_engine.runtime import upgrade
 from ir_engine.runtime.postgres import EmbeddedPostgres, installed_bin_dirs
 from ir_engine.storage import retention
+from ir_engine.storage import usage as storage_usage
 from ir_engine.storage.usage import threshold_state
 from ir_engine.testing.contract import assert_conforms
 from ir_engine.testing.fake_es import FakeElasticsearch
+from ir_engine.tools.bench_sync import events
 
 from .conftest import FIXTURES, PASSWORD
 from .tv1_support import DAY_START, NOW, Clock, Harness, iso
@@ -76,6 +80,78 @@ def test_quota_blocks_ingest_and_releases_when_raised(h):
     h.tick_until_idle()
     assert {s["state"] for s in h.api.get("/config/sources").json()} == {"ACTIVE"}
     assert h.runs(sysmon)
+
+
+def insert_old_events(dsn: str, count: int, age: timedelta) -> None:
+    with psycopg.connect(dsn, row_factory=dict_row) as conn:
+        source = fixtures.ensure_fixture_source(conn, "bench", SourceKind.LOG)
+        batch = []
+        for doc in events(count, hosts=4):
+            src = doc["_source"]
+            src["@timestamp"] = iso(datetime.fromisoformat(src["@timestamp"].replace("Z", "+00:00")) - age)
+            batch.append(doc)
+            if len(batch) == 1000:
+                write_hits(conn, source, batch)
+                batch = []
+        if batch:
+            write_hits(conn, source, batch)
+        conn.commit()
+
+
+def database_size(dsn: str) -> int:
+    with psycopg.connect(dsn) as conn:
+        return conn.execute("SELECT pg_database_size(current_database())").fetchone()[0]
+
+
+def test_blocked_sync_resumes_once_retention_frees_space(h, monkeypatch):
+    # WAL belongs to the whole test cluster and moves with the other tests; keep this test to the database itself.
+    monkeypatch.setattr(storage_usage, "_optional_size", lambda conn, query: 0)
+    insert_old_events(h.dsn, 30_000, age=timedelta(days=10))
+    fixtures.load(h.dsn, [FIXTURES])  # newer rows after the old ones, so VACUUM cannot simply cut the file short
+    h.configure()
+    sysmon = h.source_id("sysmon")
+    with psycopg.connect(h.dsn, row_factory=dict_row) as conn:
+        used = storage_usage.usage(conn, None, 1)["used_bytes"]
+    # The API keeps the quota at 1 GB or more; size it to this small database directly.
+    h.execute("UPDATE app_settings SET value = %s WHERE key = 'quota_bytes'", (Jsonb(int(used / 0.92)),))
+    h.execute("UPDATE app_settings SET value = '30' WHERE key = 'retention_days'")
+
+    h.tick_until_idle()
+    assert {s["state"] for s in h.api.get("/config/sources").json()} == {"QUOTA_BLOCKED"}
+    assert h.runs(sysmon) == []
+    allocated = database_size(h.dsn)
+
+    # Retention is shortened; the next pass under pressure (10 minutes later) deletes the old events.
+    h.execute("UPDATE app_settings SET value = '5' WHERE key = 'retention_days'")
+    h.clock.advance(minutes=10)
+    h.tick_until_idle()
+
+    assert h.one("SELECT count(*) AS n FROM raw_events r JOIN source_configs s ON s.id = r.source_id WHERE s.name = 'bench'")["n"] == 0
+    assert {s["state"] for s in h.api.get("/config/sources").json()} == {"ACTIVE"}
+    assert h.runs(sysmon)
+    body = h.api.get("/storage/usage")
+    assert_conforms(body, "getStorageUsage")
+    assert body.json()["threshold_state"] in ("OK", "WARN_70") and body.json()["used_bytes"] == sum(body.json()["breakdown"].values())
+    # The files did not shrink; usage fell because PostgreSQL will put new rows into the freed space.
+    assert database_size(h.dsn) > allocated * 0.8
+
+
+def test_usage_counts_whole_files_without_the_free_space_map(dsn, monkeypatch):
+    monkeypatch.setattr(storage_usage, "FREESPACE_EXTENSION", "no_such_extension")
+    with psycopg.connect(dsn, row_factory=dict_row) as conn:
+        assert storage_usage.measure_reusable(conn) is None
+        assert storage_usage.refresh_reusable(conn, NOW) == 0
+        body = storage_usage.usage(conn, None, 32212254720)
+        allocated = conn.execute("SELECT pg_database_size(current_database()) AS n").fetchone()["n"]
+    assert body["breakdown"]["database"] == allocated
+
+
+def test_free_space_is_remeasured_every_ten_minutes(dsn):
+    with psycopg.connect(dsn, row_factory=dict_row) as conn:
+        assert storage_usage.reusable_due(conn, NOW)
+        storage_usage.refresh_reusable(conn, NOW)
+        assert not storage_usage.reusable_due(conn, NOW + timedelta(minutes=9))
+        assert storage_usage.reusable_due(conn, NOW + timedelta(minutes=10))
 
 
 def test_retention_keeps_events_pinned_to_a_case(h):

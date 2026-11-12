@@ -17,7 +17,7 @@ from ..elk import queries
 from ..elk.client import make_client
 from ..runtime.services import BackgroundService
 from ..storage import retention
-from ..storage.usage import record_sample, usage
+from ..storage.usage import record_sample, refresh_reusable, reusable_due, usage
 from . import access, config, runner
 from .common import utcnow
 
@@ -248,6 +248,7 @@ class SyncScheduler(BackgroundService):
         self.data_dir = data_dir
         self._recovered = False
         self._last_retention: datetime | None = None
+        self._unvacuumed = 0
 
     def start(self) -> None:
         try:
@@ -318,9 +319,11 @@ class SyncScheduler(BackgroundService):
             return None
 
     def maintain_storage(self, conn: psycopg.Connection, settings: dict, now: datetime) -> str:
-        """Hourly retention; every 10 minutes while usage is at or above 80%."""
+        """Hourly retention; every 10 minutes while usage is at or above 80%. Deleted rows lower usage only once
+        VACUUM has made their space reusable, so a large delete, or any delete while blocked, is vacuumed at once."""
+        if reusable_due(conn, now):
+            refresh_reusable(conn, now)
         current = usage(conn, self.data_dir, settings["quota_bytes"])
-        record_sample(conn, now, current["used_bytes"])
         state = current["threshold_state"]
         every = RETENTION_PRESSURE_EVERY_S if state in ("WARN_80", "BLOCK_90") else RETENTION_EVERY_S
         if self._last_retention is None or now - self._last_retention >= timedelta(seconds=every):
@@ -328,11 +331,22 @@ class SyncScheduler(BackgroundService):
             self._last_retention = now
             if deleted:
                 log.info("retention removed %s events", deleted)
-                current = usage(conn, self.data_dir, settings["quota_bytes"])
+                self._unvacuumed += deleted
+            if retention.vacuum_due(conn, self._unvacuumed, blocked=state == "BLOCK_90"):
+                self.reclaim(conn, now)
+            current = usage(conn, self.data_dir, settings["quota_bytes"])
         record_sample(conn, now, current["used_bytes"])
-        state = current["threshold_state"]
         conn.commit()
-        return state
+        return current["threshold_state"]
+
+    def reclaim(self, conn: psycopg.Connection, now: datetime) -> None:
+        try:
+            retention.reclaim(conn)
+            refresh_reusable(conn, now)
+            self._unvacuumed = 0
+        except psycopg.Error:
+            conn.rollback()
+            log.exception("VACUUM after retention failed; the freed space counts as used until autovacuum runs")
 
     def apply_quota(self, conn: psycopg.Connection, sources: list[dict], threshold: str) -> bool:
         blocked = threshold == "BLOCK_90"
