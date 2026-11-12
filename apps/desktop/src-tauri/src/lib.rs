@@ -13,6 +13,9 @@ use std::{
 use tauri::{Manager, State};
 
 const CONTRACT_VERSION: &str = "1.0.0";
+/// Folder under %LOCALAPPDATA% for pgdata, logs and exports (packaging/windows/README.md). It must not be the
+/// bundle identifier folder: the uninstaller's "delete app data" box removes that one with everything inside.
+const DATA_FOLDER: &str = "IRDesktop";
 
 #[derive(Clone, Serialize)]
 pub struct Endpoint {
@@ -43,7 +46,7 @@ pub struct EngineProcess {
 impl EngineProcess {
     fn start(&mut self, app: &tauri::AppHandle) -> Result<(), String> {
         let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
-        let data_dir = app.path().app_local_data_dir().map_err(|e| e.to_string())?;
+        let data_dir = data_dir(&app.path().local_data_dir().map_err(|e| e.to_string())?);
         fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
 
         let token = random_token();
@@ -229,9 +232,21 @@ pub fn run() {
         .expect("error while running IR Desktop");
 }
 
+fn data_dir(local_data: &Path) -> PathBuf {
+    local_data.join(DATA_FOLDER)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::EngineEvent;
+    use super::{data_dir, EngineEvent};
+    use std::path::Path;
+
+    #[test]
+    fn data_lives_outside_the_identifier_folder_the_uninstaller_may_delete() {
+        let local = Path::new(r"C:\Users\lab\AppData\Local");
+        assert_eq!(data_dir(local), local.join("IRDesktop"));
+        assert_ne!(data_dir(local), local.join("vn.irdesktop.app"));
+    }
 
     #[test]
     fn parses_ready_response() {
