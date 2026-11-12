@@ -8,7 +8,7 @@ from uuid import uuid4
 from psycopg.types.json import Jsonb
 
 from .. import audit
-from .service import cursor_decode, cursor_encode, event, invalid, missing
+from .service import cursor_decode, cursor_encode, event, invalid, missing, utc_json
 
 
 def get(conn, case_id):
@@ -54,7 +54,8 @@ def update(conn, case_id, body):
 def add(conn, case_id, body):
     with conn.transaction():
         get(conn, case_id)
-        snapshot = body.snapshot.model_dump(mode="json") if body.snapshot else None
+        # Stored exactly as /trace returns it, so the pinned tree is the one the analyst saw.
+        snapshot = utc_json(body.snapshot.model_dump()) if body.snapshot else None
         if body.item_type == "tree_snapshot":
             if snapshot is None:
                 invalid("Tree snapshot is required")
@@ -99,7 +100,7 @@ def export(conn, case_id, body, data_dir=None):
             "<h1>"
             + html.escape(data["title"])
             + "</h1><p>Scope: locally collected evidence. Missing data may remain.</p><pre>"
-            + html.escape(json.dumps({"case": data, "evidence": evidence}, ensure_ascii=False, default=str, indent=2))
+            + html.escape(json.dumps(utc_json({"case": data, "evidence": evidence}), ensure_ascii=False, default=str, indent=2))
             + "</pre></html>"
         ).encode()
         data_root = (
