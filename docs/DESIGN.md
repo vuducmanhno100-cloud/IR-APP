@@ -92,7 +92,7 @@ es = make_client(url, encoded_api_key, ca_pem=None, ca_fingerprint="AA:BB:...")
 | 2 | `GET /` (cần quyền cluster `monitor`; 403 thì dùng `cluster_name` người dùng nhập) | `cluster.uuid`, `name`, `version`; `cluster_key` = `identity.cluster_key(uuid, name)` |
 | 3 | `POST /_security/user/_has_privileges`, body `queries.has_privileges_body(patterns)` | `privileges[]` theo từng pattern |
 | 4 | `GET /<pattern>/_field_caps?fields=<LOG_REQUIRED_FIELDS hoặc ALERT_REQUIRED_FIELDS>` | `fields[]`; thiếu `event.ingested` → cảnh báo và đề xuất `EVENT_TIME` |
-| 5 | `POST /<pattern>/_count`, body `queries.count_body(field, from, to)` | `counts[]` |
+| 5 | `POST /<pattern>/_count` (toàn bộ); khi có query `history_from`, thêm một lần với body `queries.count_body(field, history_from, now)` theo trường thời gian bootstrap sẽ dùng | `counts[].count`, `counts[].history_count` (ước lượng ở bước 5 của wizard) |
 | 6 | — | `suggested_sources[]`: log dùng `INGESTED`/`event.ingested`, alert dùng `ALERT`/`@timestamp` |
 
 `PUT /config/elk` làm lại bước 1–3. Nếu đạt thì ghi key vào Credential Manager với tên `credentials.elk_ref(cluster_key)` và lưu `elk_connections` (không có key). Nếu `cluster_key` khác kết nối cũ thì tạo source mới, không dùng checkpoint cũ.
@@ -141,7 +141,8 @@ xử lý lỗi (elk.errors.classify_exception):
 ```
 
 - **Bootstrap** dùng cùng `fetch_window`, cửa sổ là `[from, to)` người dùng chọn, chia thành các khúc 1 giờ.
-- **Reconcile** chạy mỗi giờ: một run `RECONCILE` cho `[now − reconcile_window_h, now − safety_lag)`. Run này không đổi watermark; dedup đảm bảo không sinh bản trùng.
+- **Lần đầu kết nối** (chốt 12/11/2026): lần đồng bộ đầu tiên của một source tự lập kế hoạch bootstrap cho **24 giờ trước thời điểm bắt đầu đồng bộ** (không lùi quá mốc lưu giữ), kể cả khi người dùng không chọn khoảng nào. Nếu wizard gửi `POST /sync/bootstrap` trong lúc kế hoạch tự động còn chạy, engine gộp hai khoảng (`[min(from), max(to))`) thay vì trả 409; chỉ bootstrap do người dùng yêu cầu mà chưa xong mới chặn bootstrap mới.
+- **Reconcile** chạy mỗi giờ: một run `RECONCILE` cho `[max(now − reconcile_window_h, đầu khoảng đã đồng bộ), now − safety_lag)`. "Đầu khoảng đã đồng bộ" là mốc dưới nhỏ nhất của các run INCREMENTAL/BOOTSTRAP thành công, nên reconcile chỉ quét bù chứ không tự kéo lịch sử. Run này không đổi watermark; dedup đảm bảo không sinh bản trùng.
 - **Alert** dùng hai truy vấn mỗi kỳ:
   - Alert mới hoặc cập nhật: cửa sổ trên `@timestamp`. Trường này là thời điểm alert được tạo hoặc cập nhật gần nhất.
   - Status thay đổi: `queries.alert_status_search` trên `kibana.alert.workflow_status_updated_at`, watermark riêng `sync_checkpoints.alert_status_watermark`.
@@ -251,6 +252,9 @@ Khung app đã có và chạy được (xem `apps/desktop/README.md`): 10 màn h
   - `NOT_IMPLEMENTED` → hiện "chưa có" thay vì crash.
 - Cây: `ProcessNode.depth` cho biết vị trí; dùng elkjs layout `layered` hướng từ trên xuống. Node có `collapsed_children > 0` hiện nút "+N" gọi `/trace/expand`. Highlight là state React, không gọi API ghi.
 - Wizard: ô API key là `type="password"`; xóa state ngay sau khi `PUT /config/elk` trả về.
+- Wizard theo báo cáo mục 3.1, sau khi "Kiểm tra" đạt:
+  - Bước 5 "Lấy lịch sử và dung lượng": chọn mốc lấy log (24 giờ mặc định, 3/7/30 ngày hoặc thời điểm tùy chọn; không vượt `retention_days`), hạn mức dung lượng local, ước lượng số event bằng `POST /config/elk/test?history_from=…`. Lần đầu kết nối luôn lấy ít nhất 24 giờ trước lúc bấm lưu; đổi key cho kết nối có sẵn thì mặc định "Không lấy thêm".
+  - Bước 6 "Lưu và bắt đầu đồng bộ": `PUT /config/settings` (nếu đổi hạn mức) → `PUT /config/elk` → `POST /sync/bootstrap {from, to: now}` → chuyển sang màn hình Đồng bộ.
 
 ## 8. Đóng gói (TV3)
 
