@@ -336,7 +336,33 @@ def test_reconcile_refetches_hours_where_elk_has_more(h):
     reconcile = [r for r in h.runs(ids["sysmon"]) if r["run_type"] == "RECONCILE"][-1]
     assert reconcile["status"] == "SUCCEEDED" and reconcile["upserted_count"] == 15 - remaining
     assert h.one("SELECT count(*) AS n FROM raw_events WHERE source_id = %s", (ids["sysmon"],))["n"] == 15
-    assert reconcile["lower_bound"] == h.clock() - timedelta(hours=24)
+    # 24 hours back would reach before the bootstrap; reconcile stays inside what has been synced.
+    assert reconcile["lower_bound"] == DAY_START
+
+
+def test_first_connection_without_bootstrap_does_not_pull_history(h):
+    h.configure()
+    h.tick_until_idle()
+    h.clock.advance(hours=1, minutes=1)
+    h.tick_until_idle()
+    sysmon = h.source_id("sysmon")
+    first = min(r["lower_bound"] for r in h.runs(sysmon) if r["run_type"] == "INCREMENTAL")
+    assert all(r["lower_bound"] >= first for r in h.runs(sysmon) if r["run_type"] == "RECONCILE")
+    assert h.one("SELECT count(*) AS n FROM raw_events WHERE source_id = %s", (sysmon,))["n"] == 0
+
+
+def test_bootstrap_is_accepted_while_the_first_incremental_runs(h):
+    """Saving sources wakes the scheduler, so the wizard's bootstrap often lands while an incremental run is queued."""
+    h.configure()
+    assert h.api.post("/sync/run-now", json={}).status_code == 202
+    response = bootstrap(h)
+    assert_conforms(response, "startBootstrap")
+    assert response.status_code == 202 and response.json()["runs"] == []
+    h.tick_until_idle()
+    sysmon = h.source_id("sysmon")
+    assert [r["run_type"] for r in h.runs(sysmon)][:2] == ["INCREMENTAL", "BOOTSTRAP"]
+    assert h.one("SELECT count(*) AS n FROM raw_events WHERE source_id = %s", (sysmon,))["n"] == 15
+    assert h.one("SELECT count(*) AS n FROM app_settings WHERE key LIKE 'bootstrap.%%'")["n"] == 0
 
 
 def test_status_reflects_configuration(h):

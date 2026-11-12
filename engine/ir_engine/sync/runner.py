@@ -134,6 +134,18 @@ def last_started(conn: psycopg.Connection, source_id: int, run_type: RunType) ->
     return row["at"]
 
 
+def synced_since(conn: psycopg.Connection, source_id: int) -> datetime | None:
+    """Start of the period that incremental and bootstrap runs have covered for this source."""
+    row = conn.execute(
+        """
+        SELECT min(lower_bound) AS at FROM sync_runs
+        WHERE source_id = %s AND run_type IN ('INCREMENTAL', 'BOOTSTRAP') AND status = 'SUCCEEDED'
+        """,
+        (source_id,),
+    ).fetchone()
+    return row["at"]
+
+
 def recover_interrupted(conn: psycopg.Connection, now: datetime) -> int:
     """A crash leaves runs FETCHING forever and the unique index would then block the source; close them on startup.
 

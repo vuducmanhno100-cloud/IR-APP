@@ -101,9 +101,15 @@ def behind(watermark: datetime, ctx: "SyncContext", lag: timedelta) -> bool:
     return watermark < ctx.now - lag - ctx.interval
 
 
-def reconcile_window(source: dict, cp: dict, settings: dict, now: datetime) -> tuple[datetime, datetime] | None:
-    """Never scan back past local retention, and never ahead of what incremental has already covered."""
-    lower = max(now - timedelta(hours=settings["reconcile_window_h"]), retention.cutoff(now, settings["retention_days"]))
+def reconcile_window(
+    source: dict, cp: dict, settings: dict, now: datetime, synced_from: datetime | None
+) -> tuple[datetime, datetime] | None:
+    """Only the period already synced: never before the first successful incremental or bootstrap run (history the
+    user did not ask for is bootstrap's job; on a first connection this used to pull a whole day and keep bootstrap
+    busy), never past local retention, and never ahead of what incremental has covered."""
+    if synced_from is None:
+        return None
+    lower = max(now - timedelta(hours=settings["reconcile_window_h"]), retention.cutoff(now, settings["retention_days"]), synced_from)
     upper = min(now - timedelta(seconds=source["safety_lag_s"]), cp["ingest_watermark"])
     return (lower, upper) if lower < upper else None
 
@@ -222,7 +228,9 @@ def sync_source(conn: psycopg.Connection, ctx: SyncContext, source: dict) -> boo
             return True
 
     if not ctx.should_stop() and is_due(conn, source["id"], RunType.RECONCILE, ctx.now, timedelta(seconds=RECONCILE_EVERY_S)):
-        window = reconcile_window(source, config.ensure_checkpoint(conn, source["id"]), ctx.settings, ctx.now)
+        window = reconcile_window(
+            source, config.ensure_checkpoint(conn, source["id"]), ctx.settings, ctx.now, runner.synced_since(conn, source["id"])
+        )
         if window:
             run_window(conn, ctx, source, RunType.RECONCILE, window)
     return more
