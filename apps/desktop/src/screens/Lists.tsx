@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { call, engine } from "../api/client";
 import { useLoad } from "../api/useLoad";
-import { Badge, ErrorView, Loading, Section, Time } from "../components/common";
+import { Badge, EmptyState, ErrorView, Loading, Section, Time } from "../components/common";
 
 const SEVERITY_TONE = { low: "neutral", medium: "info", high: "warn", critical: "bad" } as const;
 
@@ -11,6 +11,7 @@ export function Alerts({ onOpenEvent }: { onOpenEvent: (id: number) => void }) {
     <Section title="Alert" actions={<button onClick={alerts.reload}>Làm mới</button>}>
       <Loading when={alerts.loading} />
       <ErrorView error={alerts.error} />
+      {!alerts.loading && !alerts.error && !alerts.data?.items.length && <EmptyState title="Không có alert">Không có alert nào trong khoảng dữ liệu hiện tại.</EmptyState>}
       <table>
         <thead>
           <tr>
@@ -45,6 +46,7 @@ export function Unresolved({ onOpenEvent }: { onOpenEvent: (id: number) => void 
     <Section title="Event và quan hệ chưa liên kết">
       <Loading when={items.loading} />
       <ErrorView error={items.error} />
+      {!items.loading && !items.error && !items.data?.items.length && <EmptyState title="Không có quan hệ chưa liên kết">Tất cả quan hệ hiện đã được xử lý.</EmptyState>}
       <table>
         <thead>
           <tr>
@@ -100,6 +102,7 @@ export function Cases() {
       </form>
       <Loading when={cases.loading} />
       <ErrorView error={cases.error ?? error} />
+      {!cases.loading && !cases.error && !error && !cases.data?.items.length && <EmptyState title="Chưa có case">Tạo case đầu tiên để bắt đầu lưu evidence.</EmptyState>}
       <table>
         <thead>
           <tr>

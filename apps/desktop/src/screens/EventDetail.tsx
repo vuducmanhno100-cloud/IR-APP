@@ -1,6 +1,6 @@
 import { call, engine } from "../api/client";
 import { useLoad } from "../api/useLoad";
-import { Badge, ErrorView, Loading, Section, Time } from "../components/common";
+import { Badge, EmptyState, ErrorView, Loading, Section, Time } from "../components/common";
 
 export function EventDetail({ eventId, onTrace }: { eventId: number; onTrace: (id: number) => void }) {
   const ev = useLoad(async () => call((await engine()).GET("/events/{event_id}", { params: { path: { event_id: eventId } } })), [eventId]);
@@ -33,6 +33,7 @@ export function EventDetail({ eventId, onTrace }: { eventId: number; onTrace: (i
           <pre className="json">{JSON.stringify(e.payload, null, 2)}</pre>
         </>
       )}
+      {!ev.loading && !ev.error && !e && <EmptyState title="Không tìm thấy event">Event này không tồn tại hoặc không còn trong dữ liệu lưu trữ.</EmptyState>}
     </Section>
   );
 }

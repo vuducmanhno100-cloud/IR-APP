@@ -5,10 +5,7 @@ export type Schemas = components["schemas"];
 export type ErrorBody = Schemas["ErrorBody"];
 
 export class EngineError extends Error {
-  constructor(
-    public readonly body: ErrorBody,
-    public readonly status: number,
-  ) {
+  constructor(public readonly body: ErrorBody, public readonly status: number) {
     super(body.message);
   }
 }
@@ -36,7 +33,7 @@ export function engine(): Promise<EngineClient> {
     const client = createClient<paths>({ baseUrl: endpoint.base_url });
     client.use({
       onRequest({ request }) {
-        request.headers.set("Authorization", `Bearer ${endpoint.token}`);
+        request.headers.set("Authorization", "Bearer " + endpoint.token);
         if (mockPrefer) request.headers.set("Prefer", mockPrefer);
         return request;
       },
