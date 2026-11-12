@@ -139,21 +139,25 @@ def bootstrap(conn: psycopg.Connection, request: BootstrapRequest, now: datetime
     if lower < oldest:
         raise invalid(f"'from' cũ hơn thời gian lưu giữ ({settings['retention_days']} ngày); dữ liệu sẽ bị xóa ngay", field="from")
     sources = target_sources(conn, connection, request.source_ids)
-    planned = [s["id"] for s in sources if config.get_plan(conn, s["id"])]
+    plans = {s["id"]: config.get_plan(conn, s["id"]) for s in sources}
+    planned = [sid for sid, plan in plans.items() if plan and not plan["auto"]]
     if planned:
         raise busy("Source đang có bootstrap chưa xong", source_ids=planned)
     runs = []
     for source in sources:
-        config.set_plan(conn, source["id"], lower, upper, lower)
+        # The 24 hours planned automatically by the first sync are kept: the plan covers both ranges.
+        auto = plans[source["id"]]
+        start, end = (min(lower, auto["from"]), max(upper, auto["to"])) if auto else (lower, upper)
+        config.set_plan(conn, source["id"], start, end, start)
         cp = config.ensure_checkpoint(conn, source["id"])
         if cp["ingest_watermark"] is None:
-            conn.execute("UPDATE sync_checkpoints SET ingest_watermark = %s WHERE source_id = %s", (upper, source["id"]))
+            conn.execute("UPDATE sync_checkpoints SET ingest_watermark = %s WHERE source_id = %s", (end, source["id"]))
         # A source busy with another run (the first incremental starts as soon as sources are saved) keeps its plan;
         # the scheduler starts the first chunk when that run ends, as it does for a source that is not ACTIVE yet.
         if source["state"] == SourceState.ACTIVE and not runner.active_run(conn, source["id"]):
-            first = min(lower + timedelta(seconds=chunk_span(source)), upper)
+            first = min(start + timedelta(seconds=chunk_span(source)), end)
             try:
-                runs.append(runner.create_run(conn, source["id"], RunType.BOOTSTRAP, lower, first))
+                runs.append(runner.create_run(conn, source["id"], RunType.BOOTSTRAP, start, first))
             except runner.RunBusy:
                 pass
     audit.record(conn, "sync.bootstrap", "source_configs", {"from": iso(lower), "to": iso(upper), "source_ids": [s["id"] for s in sources]})

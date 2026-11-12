@@ -340,29 +340,45 @@ def test_reconcile_refetches_hours_where_elk_has_more(h):
     assert reconcile["lower_bound"] == DAY_START
 
 
-def test_first_connection_without_bootstrap_does_not_pull_history(h):
+def test_first_connection_fetches_the_24_hours_before_it(h):
+    old = log_hit(h.fake, 990001, NOW - timedelta(days=2))
+    h.fake.state.add_hits([old])
     h.configure()
     h.tick_until_idle()
+    sysmon = h.source_id("sysmon")
+    start = NOW - timedelta(seconds=60 + 300)  # safety lag + sync interval
+    boot = [r for r in h.runs(sysmon) if r["run_type"] == "BOOTSTRAP"]
+    assert min(r["lower_bound"] for r in boot) == start - timedelta(hours=24) and max(r["upper_bound"] for r in boot) == start
+    assert h.one("SELECT count(*) AS n FROM raw_events WHERE source_id = %s", (sysmon,))["n"] == 15
+    assert not h.one("SELECT 1 AS x FROM raw_events WHERE elastic_id = %s", (old["_id"],))
+    assert h.one("SELECT count(*) AS n FROM app_settings WHERE key LIKE 'bootstrap.%%'")["n"] == 0
+
+    # Later passes reconcile only what has been synced: never back before the automatic 24 hours.
     h.clock.advance(hours=1, minutes=1)
     h.tick_until_idle()
-    sysmon = h.source_id("sysmon")
-    first = min(r["lower_bound"] for r in h.runs(sysmon) if r["run_type"] == "INCREMENTAL")
-    assert all(r["lower_bound"] >= first for r in h.runs(sysmon) if r["run_type"] == "RECONCILE")
-    assert h.one("SELECT count(*) AS n FROM raw_events WHERE source_id = %s", (sysmon,))["n"] == 0
+    assert all(r["lower_bound"] >= start - timedelta(hours=24) for r in h.runs(sysmon) if r["run_type"] == "RECONCILE")
 
 
-def test_bootstrap_is_accepted_while_the_first_incremental_runs(h):
-    """Saving sources wakes the scheduler, so the wizard's bootstrap often lands while an incremental run is queued."""
+def test_wizard_bootstrap_extends_the_automatic_24_hours(h):
+    """Saving the connection wakes the scheduler, so the wizard's bootstrap usually lands after the first sync
+    planned the automatic 24 hours; the user's range is merged with it instead of being refused."""
+    old = log_hit(h.fake, 990002, NOW - timedelta(days=2))
+    h.fake.state.add_hits([old])
     h.configure()
     assert h.api.post("/sync/run-now", json={}).status_code == 202
-    response = bootstrap(h)
+    response = bootstrap(h, NOW - timedelta(days=3), NOW)
     assert_conforms(response, "startBootstrap")
     assert response.status_code == 202 and response.json()["runs"] == []
-    h.tick_until_idle()
+    h.tick_until_idle(limit=200)  # 72 one-hour chunks
     sysmon = h.source_id("sysmon")
-    assert [r["run_type"] for r in h.runs(sysmon)][:2] == ["INCREMENTAL", "BOOTSTRAP"]
-    assert h.one("SELECT count(*) AS n FROM raw_events WHERE source_id = %s", (sysmon,))["n"] == 15
+    boot = [r for r in h.runs(sysmon) if r["run_type"] == "BOOTSTRAP"]
+    assert min(r["lower_bound"] for r in boot) == NOW - timedelta(days=3) and max(r["upper_bound"] for r in boot) == NOW
+    assert h.one("SELECT 1 AS x FROM raw_events WHERE elastic_id = %s", (old["_id"],))
+    assert h.one("SELECT count(*) AS n FROM raw_events WHERE source_id = %s", (sysmon,))["n"] == 16
     assert h.one("SELECT count(*) AS n FROM app_settings WHERE key LIKE 'bootstrap.%%'")["n"] == 0
+
+    again = bootstrap(h, NOW - timedelta(days=1), NOW)
+    assert again.status_code == 202  # the previous plan is finished; a new one is accepted
 
 
 def test_status_reflects_configuration(h):

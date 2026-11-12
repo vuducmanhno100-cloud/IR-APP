@@ -315,7 +315,7 @@ def _advance(conn: psycopg.Connection, source: dict, run: dict, now: datetime) -
             if upper >= plan["to"]:
                 config.clear_plan(conn, sid)
             else:
-                config.set_plan(conn, sid, plan["from"], plan["to"], upper)
+                config.set_plan(conn, sid, plan["from"], plan["to"], upper, auto=plan["auto"])
 
 
 def execute_run(
