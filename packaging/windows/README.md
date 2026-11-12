@@ -47,14 +47,40 @@ pyinstaller -n ir-engine --onedir --noconsole ^
 4. Kill tiến trình app trong Task Manager, mở lại app.
 5. Gỡ cài đặt, cài lại: dữ liệu trong `%LOCALAPPDATA%\IRDesktop` vẫn còn.
 
-## Build tự động bằng script TV3
+## Build tự động bằng script
 
-Chạy trên Windows có Visual Studio Build Tools, Rust toolchain và Node.js 24.18+:
+Chạy trên Windows có Python 3.13 x64, Visual Studio Build Tools (C++), Rust stable và Node.js 24.18+ (Prism trong devDependencies yêu cầu bản này):
 
 ```powershell
 cd packaging\windows
 .\build.ps1 -PostgreSqlBin "C:\Program Files\PostgreSQL\18\bin"
+# máy lab không có internet: kèm luôn WebView2 (bộ cài nặng thêm khoảng 130 MB)
+.\build.ps1 -PostgreSqlBin "C:\Program Files\PostgreSQL\18\bin" -OfflineWebView2
 ```
 
-Script tạo PyInstaller onedir, kiểm tra đầu ra engine/PostgreSQL rồi gọi Tauri NSIS. PostgreSQL đang được phát hành
-riêng dưới giấy phép PostgreSQL; installer phải chép license của bộ binary nguồn vào thư mục cài đặt.
+Script làm theo thứ tự:
+
+1. Từ chối build khi file đã theo dõi còn thay đổi chưa commit (`-AllowDirty` chỉ dùng thử ở máy mình) và khi version
+   trong `tauri.conf.json` khác `engine/pyproject.toml`.
+2. Tạo venv riêng `packaging\windows\.build-venv` (bắt buộc Python 3.13 64-bit), cài engine vào đó rồi chạy PyInstaller.
+   File tạm nằm trong `packaging\windows\build`; `dist\engine` được dọn trước khi chép bản mới.
+3. Chép `bin`, `lib`, `share` của PostgreSQL vào `dist\pgsql` (dọn bản cũ trước), kiểm tra có extension `pg_trgm` và
+   `pg_freespacemap`, chép giấy phép `licenses\PostgreSQL-COPYRIGHT.txt` thành `pgsql\COPYRIGHT.txt`.
+4. `npm ci` rồi `tauri build` ra bộ cài NSIS trong `apps\desktop\src-tauri\target\release\bundle\nsis\`.
+5. Ghi SHA-256 của bộ cài vào file `.sha256` cạnh nó và in ra commit, version.
+
+`licenses\PostgreSQL-COPYRIGHT.txt` là nguyên văn `COPYRIGHT` của nhánh `REL_18_STABLE` trong repo postgres/postgres.
+
+## Dữ liệu và gỡ cài đặt
+
+App truyền cho engine thư mục `%LOCALAPPDATA%\IRDesktop`. Không dùng thư mục theo identifier
+(`%LOCALAPPDATA%\vn.irdesktop.app`): ô "xóa dữ liệu ứng dụng" của trình gỡ cài đặt NSIS xóa đúng thư mục đó, nên
+database và evidence để ở đây sẽ mất. Thư mục identifier chỉ còn cache của WebView.
+
+## Bảo mật của bản phát hành
+
+- CSP trong `tauri.conf.json` chỉ cho tải tài nguyên của app và gọi engine ở `http://127.0.0.1:*` (cùng IPC của Tauri);
+  `devCsp` để trống nên `tauri dev` không bị ảnh hưởng. Đã chạy mọi màn hình (kể cả cây tiến trình) dưới CSP này trên
+  Chromium, không có vi phạm.
+- Giao diện không có quyền shell (`capabilities/default.json` chỉ có `core:default`); engine được khởi chạy từ Rust.
+- Không đặt `IR_DEV_TOKEN`, `IR_SECRET_BACKEND`, `IR_DATABASE_URL` trên máy chạy bản phát hành.

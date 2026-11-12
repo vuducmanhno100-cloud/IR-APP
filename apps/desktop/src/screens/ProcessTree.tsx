@@ -118,32 +118,34 @@ export function ProcessTree({ eventId, onOpenEvent }: { eventId: number; onOpenE
           {!view.nodes.length && <EmptyState title="Không có process">Trace không trả về process nào cho event này.</EmptyState>}
           <h3>Event liên quan</h3>
           {!view.related_events.length && <EmptyState title="Không có event liên quan">Không tìm thấy event con hoặc cha trong cửa sổ hiện tại.</EmptyState>}
-          <table>
-            <thead>
-              <tr>
-                <th>Thời gian</th>
-                <th>Loại</th>
-                <th>Process</th>
-                <th>Nội dung</th>
-              </tr>
-            </thead>
-            <tbody>
-              {view.related_events.map((e) => (
-                <tr
-                  key={`${e.event_id}-${e.process_id}`}
-                  className={view.matched_event_ids.includes(e.event_id) ? "hl" : ""}
-                  onClick={() => onOpenEvent(e.event_id)}
-                >
-                  <td>
-                    <Time value={e.event_time} />
-                  </td>
-                  <td>{e.link_type}</td>
-                  <td>{view.nodes.find((n) => n.id === e.process_id)?.name ?? e.process_id}</td>
-                  <td>{e.summary}</td>
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Thời gian</th>
+                  <th>Loại</th>
+                  <th>Process</th>
+                  <th>Nội dung</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {view.related_events.map((e) => (
+                  <tr
+                    key={`${e.event_id}-${e.process_id}`}
+                    className={view.matched_event_ids.includes(e.event_id) ? "hl" : ""}
+                    onClick={() => onOpenEvent(e.event_id)}
+                  >
+                    <td>
+                      <Time value={e.event_time} />
+                    </td>
+                    <td className="nowrap">{e.link_type}</td>
+                    <td className="nowrap">{view.nodes.find((n) => n.id === e.process_id)?.name ?? e.process_id}</td>
+                    <td className="overflow-cell">{e.summary}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </>
       )}
     </Section>

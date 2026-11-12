@@ -12,30 +12,32 @@ export function Alerts({ onOpenEvent }: { onOpenEvent: (id: number) => void }) {
       <Loading when={alerts.loading} />
       <ErrorView error={alerts.error} />
       {!alerts.loading && !alerts.error && !alerts.data?.items.length && <EmptyState title="Không có alert">Không có alert nào trong khoảng dữ liệu hiện tại.</EmptyState>}
-      <table>
-        <thead>
-          <tr>
-            <th>Thời gian</th>
-            <th>Rule</th>
-            <th>Mức độ</th>
-            <th>Trạng thái</th>
-            <th>Host</th>
-          </tr>
-        </thead>
-        <tbody>
-          {alerts.data?.items.map((a) => (
-            <tr key={a.event_id} onClick={() => onOpenEvent(a.original_event_id ?? a.event_id)}>
-              <td>
-                <Time value={a.alert_time} />
-              </td>
-              <td>{a.rule_name}</td>
-              <td>{a.severity && <Badge tone={SEVERITY_TONE[a.severity]}>{a.severity}</Badge>}</td>
-              <td>{a.status}</td>
-              <td>{a.host_name}</td>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Thời gian</th>
+              <th>Rule</th>
+              <th>Mức độ</th>
+              <th>Trạng thái</th>
+              <th>Host</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {alerts.data?.items.map((a) => (
+              <tr key={a.event_id} onClick={() => onOpenEvent(a.original_event_id ?? a.event_id)}>
+                <td>
+                  <Time value={a.alert_time} />
+                </td>
+                <td className="overflow-cell">{a.rule_name}</td>
+                <td>{a.severity && <Badge tone={SEVERITY_TONE[a.severity]}>{a.severity}</Badge>}</td>
+                <td>{a.status}</td>
+                <td className="nowrap">{a.host_name}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Section>
   );
 }
@@ -47,32 +49,34 @@ export function Unresolved({ onOpenEvent }: { onOpenEvent: (id: number) => void 
       <Loading when={items.loading} />
       <ErrorView error={items.error} />
       {!items.loading && !items.error && !items.data?.items.length && <EmptyState title="Không có quan hệ chưa liên kết">Tất cả quan hệ hiện đã được xử lý.</EmptyState>}
-      <table>
-        <thead>
-          <tr>
-            <th>Event</th>
-            <th>Host</th>
-            <th>Quan hệ</th>
-            <th>GUID đích</th>
-            <th>Lý do</th>
-            <th>Trạng thái</th>
-          </tr>
-        </thead>
-        <tbody>
-          {items.data?.items.map((u) => (
-            <tr key={u.id} onClick={() => onOpenEvent(u.event_id)}>
-              <td>#{u.event_id}</td>
-              <td>{u.host_name}</td>
-              <td>{u.relation}</td>
-              <td className="mono">{u.target_guid}</td>
-              <td>{u.reason}</td>
-              <td>
-                <Badge tone={u.status === "CONFLICT" ? "bad" : "warn"}>{u.status}</Badge>
-              </td>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Event</th>
+              <th>Host</th>
+              <th>Quan hệ</th>
+              <th>GUID đích</th>
+              <th>Lý do</th>
+              <th>Trạng thái</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {items.data?.items.map((u) => (
+              <tr key={u.id} onClick={() => onOpenEvent(u.event_id)}>
+                <td>#{u.event_id}</td>
+                <td className="nowrap">{u.host_name}</td>
+                <td>{u.relation}</td>
+                <td className="mono">{u.target_guid}</td>
+                <td className="overflow-cell">{u.reason}</td>
+                <td>
+                  <Badge tone={u.status === "CONFLICT" ? "bad" : "warn"}>{u.status}</Badge>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Section>
   );
 }
@@ -103,28 +107,30 @@ export function Cases() {
       <Loading when={cases.loading} />
       <ErrorView error={cases.error ?? error} />
       {!cases.loading && !cases.error && !error && !cases.data?.items.length && <EmptyState title="Chưa có case">Tạo case đầu tiên để bắt đầu lưu evidence.</EmptyState>}
-      <table>
-        <thead>
-          <tr>
-            <th>#</th>
-            <th>Tên</th>
-            <th>Trạng thái</th>
-            <th>Cập nhật</th>
-          </tr>
-        </thead>
-        <tbody>
-          {cases.data?.items.map((c) => (
-            <tr key={c.id}>
-              <td>{c.id}</td>
-              <td>{c.title}</td>
-              <td>{c.status}</td>
-              <td>
-                <Time value={c.updated_at} />
-              </td>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Tên</th>
+              <th>Trạng thái</th>
+              <th>Cập nhật</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {cases.data?.items.map((c) => (
+              <tr key={c.id}>
+                <td>{c.id}</td>
+                <td className="overflow-cell">{c.title}</td>
+                <td>{c.status}</td>
+                <td>
+                  <Time value={c.updated_at} />
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </Section>
   );
 }

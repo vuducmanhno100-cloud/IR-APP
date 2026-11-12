@@ -19,16 +19,18 @@ export function EventDetail({ eventId, onTrace }: { eventId: number; onTrace: (i
             Nguồn: {e.source.cluster_key} / {e.source.index_name} / {e.source.elastic_id}
           </p>
           <h3>Trường chuẩn hóa</h3>
-          <table>
-            <tbody>
-              {Object.entries(e.normalized).map(([k, v]) => (
-                <tr key={k}>
-                  <th>{k}</th>
-                  <td>{typeof v === "object" ? JSON.stringify(v) : String(v)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <div className="table-wrap">
+            <table>
+              <tbody>
+                {Object.entries(e.normalized).map(([k, v]) => (
+                  <tr key={k}>
+                    <th>{k}</th>
+                    <td className="overflow-cell">{typeof v === "object" ? JSON.stringify(v) : String(v)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
           <h3>Raw payload</h3>
           <pre className="json">{JSON.stringify(e.payload, null, 2)}</pre>
         </>

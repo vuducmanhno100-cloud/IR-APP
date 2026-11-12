@@ -16,3 +16,5 @@ apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
 fixtures/sysmon/lab/
 *.log
+packaging/windows/build/
+packaging/windows/.build-venv/

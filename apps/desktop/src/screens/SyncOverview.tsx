@@ -36,47 +36,49 @@ export function SyncOverview() {
       <Loading when={status.loading} />
       <ErrorView error={status.error ?? actionError} />
       {status.data && (
-        <table>
-          <thead>
-            <tr>
-              <th>Source</th>
-              <th>Trạng thái</th>
-              <th>Ingest watermark</th>
-              <th>Process watermark</th>
-              <th>Độ trễ</th>
-              <th>Pending / Failed</th>
-              <th>Thành công gần nhất</th>
-              <th>Lỗi gần nhất</th>
-            </tr>
-          </thead>
-          <tbody>
-            {status.data.sources.map((s) => (
-              <tr key={s.source_id}>
-                <td>
-                  {s.name} <span className="muted">({s.kind})</span>
-                </td>
-                <td>
-                  <Badge tone={STATE_TONE[s.state]}>{s.state}</Badge>
-                  {s.active_run && <Badge tone="info">{s.active_run.status}</Badge>}
-                </td>
-                <td>
-                  <Time value={s.ingest_watermark} />
-                </td>
-                <td>
-                  <Time value={s.process_watermark} />
-                </td>
-                <td>{s.lag_s ?? "—"}s</td>
-                <td>
-                  {s.pending_events} / {s.failed_events}
-                </td>
-                <td>
-                  <Time value={s.last_success} />
-                </td>
-                <td>{s.last_error ? `${s.last_error.code}: ${s.last_error.message}` : "—"}</td>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Source</th>
+                <th>Trạng thái</th>
+                <th>Ingest watermark</th>
+                <th>Process watermark</th>
+                <th>Độ trễ</th>
+                <th>Pending / Failed</th>
+                <th>Thành công gần nhất</th>
+                <th>Lỗi gần nhất</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {status.data.sources.map((s) => (
+                <tr key={s.source_id}>
+                  <td>
+                    {s.name} <span className="muted">({s.kind})</span>
+                  </td>
+                  <td>
+                    <Badge tone={STATE_TONE[s.state]}>{s.state}</Badge>
+                    {s.active_run && <Badge tone="info">{s.active_run.status}</Badge>}
+                  </td>
+                  <td>
+                    <Time value={s.ingest_watermark} />
+                  </td>
+                  <td>
+                    <Time value={s.process_watermark} />
+                  </td>
+                  <td>{s.lag_s ?? "—"}s</td>
+                  <td>
+                    {s.pending_events} / {s.failed_events}
+                  </td>
+                  <td>
+                    <Time value={s.last_success} />
+                  </td>
+                  <td className="overflow-cell">{s.last_error ? `${s.last_error.code}: ${s.last_error.message}` : "—"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       {!status.loading && !status.error && !status.data?.sources.length && (
         <EmptyState title="Chưa cấu hình nguồn đồng bộ">Thêm hoặc cấu hình nguồn ELK để bắt đầu đồng bộ.</EmptyState>
