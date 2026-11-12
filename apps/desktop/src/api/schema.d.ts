@@ -537,6 +537,11 @@ export interface components {
                 pattern: string;
                 /** Format: int64 */
                 count: number;
+                /**
+                 * Format: int64
+                 * @description Số document từ history_from đến hiện tại theo trường thời gian dùng để đồng bộ; chỉ có khi gửi history_from
+                 */
+                history_count?: number;
             }[];
             suggested_sources: components["schemas"]["SourceInput"][];
             warnings: string[];
@@ -1098,7 +1103,10 @@ export interface operations {
     };
     testElkConnection: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Mốc bắt đầu lấy lịch sử chọn ở bước 5 của wizard; khi có, mỗi phần tử counts kèm history_count */
+                history_from?: string;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -1156,7 +1164,8 @@ export interface operations {
                      *       "counts": [
                      *         {
                      *           "pattern": "logs-windows.sysmon_operational-*",
-                     *           "count": 184233
+                     *           "count": 184233,
+                     *           "history_count": 6120
                      *         }
                      *       ],
                      *       "suggested_sources": [

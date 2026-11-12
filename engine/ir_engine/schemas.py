@@ -251,6 +251,12 @@ class FieldModel(BaseModel):
 class Count(BaseModel):
     pattern: str
     count: int
+    history_count: Annotated[
+        int | None,
+        Field(
+            description="Số document từ history_from đến hiện tại theo trường thời gian dùng để đồng bộ; chỉ có khi gửi history_from"
+        ),
+    ] = None
 
 
 class SourceInput(BaseModel):

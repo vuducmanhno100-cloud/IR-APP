@@ -26,6 +26,7 @@ log = logging.getLogger("ir_engine.sync")
 INCREMENTAL_SPAN_S = 3600
 ALERT_STATUS_SPAN_S = 86400
 BOOTSTRAP_CHUNK_S = {SourceKind.LOG: 3600, SourceKind.ALERT: 86400}
+INITIAL_HISTORY = timedelta(hours=24)
 RECONCILE_EVERY_S = 3600
 RETENTION_EVERY_S = 3600
 RETENTION_PRESSURE_EVERY_S = 600
@@ -58,17 +59,26 @@ def chunk_span(source: dict) -> int:
 
 
 def initial_watermark(source: dict, settings: dict, now: datetime) -> datetime:
-    """Without a bootstrap, start with the last sync interval; history comes from POST /sync/bootstrap."""
+    """Incremental starts with the last sync interval; the history before it comes from a bootstrap plan."""
     return now - timedelta(seconds=source["safety_lag_s"] + settings["sync_interval_s"])
+
+
+def plan_initial_history(conn: psycopg.Connection, source: dict, settings: dict, now: datetime, start: datetime) -> None:
+    """The first sync of a source also fetches the 24 hours before it, unless a bootstrap is already planned.
+    POST /sync/bootstrap (wizard step 6) merges its range with this automatic one."""
+    if config.get_plan(conn, source["id"]) is not None:
+        return
+    lower = max(start - INITIAL_HISTORY, retention.cutoff(now, settings["retention_days"]))
+    if lower < start:
+        config.set_plan(conn, source["id"], lower, start, lower, auto=True)
 
 
 def prepare_checkpoint(conn: psycopg.Connection, source: dict, settings: dict, now: datetime) -> dict:
     cp = config.ensure_checkpoint(conn, source["id"])
     if cp["ingest_watermark"] is None:
-        conn.execute(
-            "UPDATE sync_checkpoints SET ingest_watermark = %s WHERE source_id = %s",
-            (initial_watermark(source, settings, now), source["id"]),
-        )
+        start = initial_watermark(source, settings, now)
+        conn.execute("UPDATE sync_checkpoints SET ingest_watermark = %s WHERE source_id = %s", (start, source["id"]))
+        plan_initial_history(conn, source, settings, now, start)
     if source["kind"] == SourceKind.ALERT and cp["alert_status_watermark"] is None:
         start = now - timedelta(days=settings["alert_resync_days"])
         conn.execute("UPDATE sync_checkpoints SET alert_status_watermark = %s WHERE source_id = %s", (start, source["id"]))

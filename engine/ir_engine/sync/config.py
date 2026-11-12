@@ -67,14 +67,15 @@ def update_settings(conn: psycopg.Connection, values: dict) -> dict:
 
 
 def get_plan(conn: psycopg.Connection, source_id: int) -> dict | None:
+    """A bootstrap plan; `auto` marks the 24 hours planned by the first sync rather than asked for by the user."""
     plan = get_value(conn, plan_key(source_id))
     if not plan:
         return None
-    return {"from": parse_iso(plan["from"]), "to": parse_iso(plan["to"]), "next": parse_iso(plan["next"])}
+    return {"from": parse_iso(plan["from"]), "to": parse_iso(plan["to"]), "next": parse_iso(plan["next"]), "auto": bool(plan.get("auto"))}
 
 
-def set_plan(conn: psycopg.Connection, source_id: int, lower: datetime, upper: datetime, next_at: datetime) -> None:
-    set_value(conn, plan_key(source_id), {"from": iso(lower), "to": iso(upper), "next": iso(next_at)})
+def set_plan(conn: psycopg.Connection, source_id: int, lower: datetime, upper: datetime, next_at: datetime, auto: bool = False) -> None:
+    set_value(conn, plan_key(source_id), {"from": iso(lower), "to": iso(upper), "next": iso(next_at), "auto": auto})
 
 
 def clear_plan(conn: psycopg.Connection, source_id: int) -> None:
