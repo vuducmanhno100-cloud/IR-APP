@@ -24,6 +24,9 @@ EVENT_TIME_OVERLAP_S = 900
 TREE_FIELDS = {"process.entity_id", "process.parent.entity_id", "host.id"}
 DEDUP_FIELDS = {"winlog.channel", "winlog.record_id"}
 _FINGERPRINT = re.compile(r"^[0-9a-f]{64}$")
+# The wizard waits on these calls: one attempt each, so a wrong CA or an unreachable cluster is reported at once
+# (the scheduler's client retries; here an unreachable cluster would take 3 x 30 s).
+PROBE_OPTIONS = {"max_retries": 0, "request_timeout": 15.0}
 
 MESSAGES = {
     ErrorCode.ELK_AUTH_FAILED: "API key không hợp lệ, đã hết hạn hoặc đã bị thu hồi",
@@ -80,7 +83,7 @@ def elk_error(exc: BaseException) -> ApiError:
 @contextmanager
 def open_client(factory: Callable[..., Elasticsearch], target: Target) -> Iterator[Elasticsearch]:
     try:
-        es = factory(target.url, target.api_key, ca_pem=target.ca_pem, ca_fingerprint=target.ca_fingerprint)
+        es = factory(target.url, target.api_key, ca_pem=target.ca_pem, ca_fingerprint=target.ca_fingerprint, **PROBE_OPTIONS)
     except (ssl.SSLError, ValueError) as exc:
         raise ApiError(ErrorCode.VALIDATION_ERROR, "CA certificate không đọc được", {"field": "ca_pem", "reason": str(exc)[:200]}) from None
     try:

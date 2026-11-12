@@ -1,8 +1,16 @@
+import socket
+import threading
+import time
 from datetime import datetime, timezone
 
 import pytest
+from elastic_transport import TransportError
 
+from ir_engine.contracts import ErrorCode
 from ir_engine.credentials import elk_ref
+from ir_engine.elk import probe
+from ir_engine.elk.client import make_client
+from ir_engine.errors import ApiError
 from ir_engine.testing.contract import assert_conforms
 from ir_engine.testing.fake_es import FakeElasticsearch, FakeState
 
@@ -216,3 +224,47 @@ def test_endpoints_require_session_token(h):
     response = h.api.get("/config/elk", headers={"Authorization": "Bearer wrong"})
     assert_conforms(response, "getElkConnection")
     assert response.status_code == 401
+
+
+class DroppingServer:
+    """Accepts TCP connections and closes them at once, counting how many attempts the client makes."""
+
+    def __init__(self):
+        self.attempts = 0
+        self.sock = socket.socket()
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen()
+        self.url = f"http://127.0.0.1:{self.sock.getsockname()[1]}"
+        threading.Thread(target=self._serve, daemon=True).start()
+
+    def _serve(self):
+        while True:
+            try:
+                conn, _ = self.sock.accept()
+            except OSError:
+                return
+            self.attempts += 1
+            conn.close()
+
+    def settled(self, expected: int) -> int:
+        deadline = time.monotonic() + 2
+        while self.attempts < expected and time.monotonic() < deadline:
+            time.sleep(0.02)
+        time.sleep(0.2)
+        return self.attempts
+
+
+def test_wizard_probe_tries_once_while_sync_keeps_retrying():
+    server = DroppingServer()
+    target = probe.Target(server.url, "key", None, "ab" * 32, None, ["logs-*"], [])
+    with pytest.raises(ApiError) as failure:
+        with probe.open_client(make_client, target) as es:
+            es.info()
+    assert failure.value.code == ErrorCode.ELK_UNREACHABLE
+    assert server.settled(1) == 1
+
+    server.attempts = 0
+    with pytest.raises(TransportError):
+        make_client(server.url, "key").info()
+    assert server.settled(3) == 3
+    server.sock.close()
