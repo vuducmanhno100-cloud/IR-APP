@@ -257,6 +257,8 @@ class SyncScheduler(BackgroundService):
         self._recovered = False
         self._last_retention: datetime | None = None
         self._unvacuumed = 0
+        self._threshold = "OK"
+        self.storage_error: str | None = None
 
     def start(self) -> None:
         try:
@@ -277,7 +279,7 @@ class SyncScheduler(BackgroundService):
                 self._recovered = True
             settings = config.get_settings(conn)
             self.interval_s = float(settings["sync_interval_s"])
-            threshold = self.maintain_storage(conn, settings, now)
+            threshold = self.storage_state(conn, settings, now)
             connection = config.active_connection(conn)
             if connection is None or connection["state"] in BLOCKED_CONNECTION:
                 conn.commit()
@@ -325,6 +327,23 @@ class SyncScheduler(BackgroundService):
             block_connection(conn, connection, ConnectionState.TLS_ERROR, SourceState.ERROR, "stored CA is unusable")
             conn.commit()
             return None
+
+    def storage_state(self, conn: psycopg.Connection, settings: dict, now: datetime) -> str:
+        """A failing storage check (data folder unreadable, VACUUM cancelled) must not stop the sync itself: keep the
+        last known state, which still blocks at 90%, and report the error in /system/health."""
+        try:
+            self._threshold = self.maintain_storage(conn, settings, now)
+            self.storage_error = None
+        except Exception as exc:
+            conn.rollback()
+            log.exception("storage check failed; sync continues with the last known usage state")
+            self.storage_error = f"storage: {type(exc).__name__}: {exc}"
+        return self._threshold
+
+    def status(self) -> dict:
+        status = super().status()
+        status["last_error"] = status["last_error"] or self.storage_error
+        return status
 
     def maintain_storage(self, conn: psycopg.Connection, settings: dict, now: datetime) -> str:
         """Hourly retention; every 10 minutes while usage is at or above 80%. Deleted rows lower usage only once
