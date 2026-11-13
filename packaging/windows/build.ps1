@@ -1,12 +1,15 @@
 [CmdletBinding()]
 param(
-    # Folder with pg_ctl.exe of PostgreSQL 18 x64; its lib and share folders are taken from the same install.
+    # bin folder of a PostgreSQL 18 x64 install (with pg_ctl.exe). Default: the copy install-prereqs.ps1 unpacks into
+    # packaging\windows\.tools, then C:\Program Files\PostgreSQL\18\bin. Only its core goes into the installer.
     [Parameter(Mandatory = $false)]
     [string]$PostgreSqlBin,
     # Embed the full WebView2 runtime (about 130 MB) for lab machines without internet access.
     [switch]$OfflineWebView2,
     # Build from a working tree with uncommitted changes (local tests only, never for a release).
-    [switch]$AllowDirty
+    [switch]$AllowDirty,
+    # Stop when a build prerequisite is missing or too old instead of running install-prereqs.ps1.
+    [switch]$NoInstall
 )
 
 $ErrorActionPreference = "Stop"
@@ -17,6 +20,7 @@ $distEngine = Join-Path $PSScriptRoot "dist\engine"
 $distPgsql = Join-Path $PSScriptRoot "dist\pgsql"
 $work = Join-Path $PSScriptRoot "build"
 $venv = Join-Path $PSScriptRoot ".build-venv"
+. (Join-Path $PSScriptRoot "prereqs.ps1")
 
 function Clear-Dist([string]$folder) {
     # Keep the README placeholder; anything left from an older build would end up in the installer.
@@ -27,6 +31,21 @@ function Invoke-Checked([string]$what, [scriptblock]$command) {
     & $command
     if ($LASTEXITCODE -ne 0) { throw "$what failed (exit code $LASTEXITCODE)." }
 }
+
+# 0. Build prerequisites and their versions, before anything slow runs.
+Update-SessionPath
+$checks = Get-Prerequisites -PostgreSqlBin $PostgreSqlBin
+Show-Prerequisites $checks
+$missing = @($checks | Where-Object { -not $_.Ok } | ForEach-Object Name)
+if ($missing.Count -gt 0) {
+    if ($NoInstall) {
+        throw "Missing or outdated build prerequisites: $($missing -join ', '). Run packaging\windows\install-prereqs.ps1, or build without -NoInstall."
+    }
+    & (Join-Path $PSScriptRoot "install-prereqs.ps1") -Only $missing -PostgreSqlBin $PostgreSqlBin
+    $checks = Get-Prerequisites -PostgreSqlBin $PostgreSqlBin
+}
+$found = @{}
+foreach ($check in $checks) { $found[$check.Name] = $check.Path }
 
 # 1. Release from a known commit, with one version for app and engine.
 $commit = (git -C $repoRoot rev-parse --short HEAD).Trim()
@@ -42,16 +61,12 @@ if ($appVersion -ne $engineVersion) {
 
 # 2. Engine in its own Python 3.13 x64 environment, so nothing from the developer's Python leaks into the build.
 if (-not (Test-Path (Join-Path $venv "Scripts\python.exe"))) {
-    if (Get-Command py -ErrorAction SilentlyContinue) {
-        Invoke-Checked "Creating the build venv" { py -3.13 -m venv $venv }
-    } else {
-        Invoke-Checked "Creating the build venv" { python -m venv $venv }
-    }
+    Invoke-Checked "Creating the build venv" { & $found["python"] -m venv $venv }
 }
 $python = Join-Path $venv "Scripts\python.exe"
 $pyInfo = (& $python -c "import sys, struct; print(sys.version_info[0], sys.version_info[1], struct.calcsize('P') * 8)").Trim()
 if ($pyInfo -ne "3 13 64") {
-    throw "The build venv must be Python 3.13 64-bit (found $pyInfo). Delete $venv and install Python 3.13 x64."
+    throw "The build venv must be Python 3.13 64-bit (found $pyInfo). Delete $venv and run the build again."
 }
 Invoke-Checked "Installing engine build dependencies" { & $python -m pip install --quiet -e "$engineDir[build]" }
 
@@ -76,35 +91,21 @@ if (-not (Test-Path (Join-Path $builtEngine "ir-engine.exe"))) {
 Clear-Dist $distEngine
 Copy-Item (Join-Path $builtEngine "*") $distEngine -Recurse -Force
 
-# 3. PostgreSQL binaries and their license.
-if ($PostgreSqlBin) {
-    if (-not (Test-Path (Join-Path $PostgreSqlBin "pg_ctl.exe"))) {
-        throw "PostgreSqlBin must contain pg_ctl.exe."
-    }
-    $postgresRoot = Split-Path (Resolve-Path $PostgreSqlBin) -Parent
-    Clear-Dist $distPgsql
-    Copy-Item $PostgreSqlBin (Join-Path $distPgsql "bin") -Recurse -Force
-    foreach ($folder in @("lib", "share")) {
-        $source = Join-Path $postgresRoot $folder
-        if (-not (Test-Path $source)) { throw "Missing $source next to the PostgreSQL bin folder." }
-        Copy-Item $source (Join-Path $distPgsql $folder) -Recurse -Force
-    }
-}
-if (-not (Test-Path (Join-Path $distEngine "ir-engine.exe"))) {
-    throw "Install an engine build in packaging/windows/dist/engine before building the installer."
-}
-if (-not (Test-Path (Join-Path $distPgsql "bin\pg_ctl.exe"))) {
-    throw "Provide PostgreSQL 18 binaries with -PostgreSqlBin."
-}
-# pg_trgm backs "contains" search; pg_freespacemap lets the quota count space freed by retention.
-foreach ($extension in @("pg_trgm", "pg_freespacemap")) {
-    if (-not (Test-Path (Join-Path $distPgsql "share\extension\$extension.control"))) {
-        throw "PostgreSQL extension $extension is missing from share\extension."
-    }
+# 3. PostgreSQL core: the programs the engine runs, the modules it loads, the DLLs they import and the Visual C++
+#    runtime (a clean Windows has none). Add-ons of the source install (PostGIS, pgAdmin...) stay out.
+Clear-Dist $distPgsql
+$bundler = Join-Path $PSScriptRoot "bundle_pgsql.py"
+Invoke-Checked "Collecting the PostgreSQL core" {
+    & $python $bundler collect --source (Split-Path $found["postgresql"] -Parent) --dest $distPgsql --crt-dir $found["msvc"]
 }
 Copy-Item (Join-Path $PSScriptRoot "licenses\PostgreSQL-COPYRIGHT.txt") (Join-Path $distPgsql "COPYRIGHT.txt") -Force
 
-# 4. Desktop app and NSIS installer, from the locked npm dependencies.
+# 4. Prove the bundle works on its own: no import a clean Windows cannot satisfy, then the engine starts the bundled
+#    PostgreSQL with PATH reduced to Windows itself, migrates, answers /system/health and shuts down.
+Invoke-Checked "DLL check" { & $python $bundler check $distEngine $distPgsql }
+Invoke-Checked "Engine smoke test" { & $python (Join-Path $PSScriptRoot "smoke_engine.py") (Join-Path $distEngine "ir-engine.exe") }
+
+# 5. Desktop app and NSIS installer, from the locked npm dependencies.
 Push-Location $desktopDir
 try {
     Invoke-Checked "npm ci" { npm ci --no-audit --no-fund }
@@ -123,13 +124,13 @@ finally {
     Pop-Location
 }
 
-# 5. Checksum to publish next to the installer.
+# 6. Checksum to publish next to the installer.
 $installer = Get-ChildItem (Join-Path $desktopDir "src-tauri\target\release\bundle\nsis\*-setup.exe") |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $installer) { throw "No installer found in src-tauri\target\release\bundle\nsis." }
 $hash = (Get-FileHash $installer.FullName -Algorithm SHA256).Hash.ToLower()
 "$hash  $($installer.Name)" | Set-Content -Encoding ascii "$($installer.FullName).sha256"
 Write-Host ""
-Write-Host "Installer : $($installer.FullName)"
+Write-Host "Installer : $($installer.FullName) ($([math]::Round($installer.Length / 1MB)) MB)"
 Write-Host "Version   : $appVersion (commit $commit)"
 Write-Host "SHA-256   : $hash"

@@ -1,1 +1,1 @@
-PostgreSQL 18 Windows binaries (bin, lib, share) go here.
+Core of PostgreSQL 18 x64 and the Visual C++ runtime, collected by build.ps1 (bundle_pgsql.py).

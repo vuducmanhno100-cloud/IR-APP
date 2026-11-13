@@ -18,3 +18,4 @@ fixtures/sysmon/lab/
 *.log
 packaging/windows/build/
 packaging/windows/.build-venv/
+packaging/windows/.tools/
