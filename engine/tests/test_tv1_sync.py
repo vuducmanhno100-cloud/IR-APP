@@ -1,7 +1,10 @@
 import threading
+import time
 from datetime import timedelta
 
+import psycopg
 import pytest
+from psycopg.rows import dict_row
 
 from ir_engine.contracts import RunType
 from ir_engine.sync import config, runner
@@ -379,6 +382,45 @@ def test_wizard_bootstrap_extends_the_automatic_24_hours(h):
 
     again = bootstrap(h, NOW - timedelta(days=1), NOW)
     assert again.status_code == 202  # the previous plan is finished; a new one is accepted
+
+
+def test_first_sync_and_wizard_bootstrap_at_the_same_moment_do_not_deadlock(h, monkeypatch):
+    """Saving the connection wakes the scheduler while the wizard posts its bootstrap. The first sync held the new
+    checkpoint row and waited for the plan row the bootstrap held, which waited for the checkpoint: PostgreSQL
+    aborted one of them (seen in the lab), and the wizard showed an error after the connection was saved."""
+    from ir_engine.sync import scheduler as scheduler_module
+
+    h.configure()
+    sysmon = h.source_id("sysmon")
+    source = h.one("SELECT * FROM source_configs WHERE id = %s", (sysmon,))
+    checkpoint_taken = threading.Event()
+    real_ensure = config.ensure_checkpoint
+
+    def slow_ensure(conn, source_id):
+        row = real_ensure(conn, source_id)
+        if threading.current_thread().name == "first-sync":
+            checkpoint_taken.set()
+            time.sleep(0.5)  # the bootstrap request arrives right now
+        return row
+
+    monkeypatch.setattr(config, "ensure_checkpoint", slow_ensure)
+    errors = []
+
+    def first_sync():
+        try:
+            with psycopg.connect(h.dsn, row_factory=dict_row) as conn:
+                scheduler_module.prepare_checkpoint(conn, source, config.get_settings(conn), NOW)
+        except Exception as exc:  # noqa: BLE001 - reported below
+            errors.append(exc)
+
+    worker = threading.Thread(target=first_sync, name="first-sync")
+    worker.start()
+    checkpoint_taken.wait(5)
+    response = bootstrap(h, NOW - timedelta(days=3), NOW, source_ids=[sysmon])
+    worker.join(10)
+    assert not errors and response.status_code == 202, (errors, response.text)
+    plan = config.get_plan(psycopg.connect(h.dsn, row_factory=dict_row), sysmon)
+    assert plan["from"] == NOW - timedelta(days=3) and plan["auto"] is False
 
 
 def test_status_reflects_configuration(h):

@@ -139,6 +139,7 @@ def bootstrap(conn: psycopg.Connection, request: BootstrapRequest, now: datetime
     if lower < oldest:
         raise invalid(f"'from' cũ hơn thời gian lưu giữ ({settings['retention_days']} ngày); dữ liệu sẽ bị xóa ngay", field="from")
     sources = target_sources(conn, connection, request.source_ids)
+    config.lock_plans(conn, [s["id"] for s in sources])
     plans = {s["id"]: config.get_plan(conn, s["id"]) for s in sources}
     planned = [sid for sid, plan in plans.items() if plan and not plan["auto"]]
     if planned:

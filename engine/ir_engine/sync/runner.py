@@ -294,6 +294,7 @@ def _reconcile(
 
 def _advance(conn: psycopg.Connection, source: dict, run: dict, now: datetime) -> None:
     sid, upper = source["id"], run["upper_bound"]
+    config.lock_plans(conn, [sid])
     config.ensure_checkpoint(conn, sid)
     if run["run_type"] == RunType.INCREMENTAL:
         conn.execute(

@@ -78,6 +78,18 @@ def set_plan(conn: psycopg.Connection, source_id: int, lower: datetime, upper: d
     set_value(conn, plan_key(source_id), {"from": iso(lower), "to": iso(upper), "next": iso(next_at), "auto": auto})
 
 
+PLAN_LOCK = 7301
+
+
+def lock_plans(conn: psycopg.Connection, source_ids: list[int]) -> None:
+    """Serialize everything that reads and writes a source's bootstrap plan, until the transaction ends.
+
+    The first sync writes the checkpoint then the automatic plan, POST /sync/bootstrap wrote the plan then the
+    checkpoint: run together they deadlocked, or the automatic plan overwrote the user's. Ids are locked in order."""
+    for source_id in sorted(set(source_ids)):
+        conn.execute("SELECT pg_advisory_xact_lock(%s, %s)", (PLAN_LOCK, source_id))
+
+
 def clear_plan(conn: psycopg.Connection, source_id: int) -> None:
     delete_value(conn, plan_key(source_id))
 
@@ -164,14 +176,27 @@ def save_connection(conn: psycopg.Connection, store, target, check) -> tuple[dic
         delete_value(conn, streams_key(source["id"]))
         if source["state"] in (SourceState.AUTH_FAILED, SourceState.FORBIDDEN, SourceState.ERROR):
             set_source_state(conn, source["id"], SourceState.ACTIVE)
-    if not sources:
-        for spec in suggest_sources(target.log_patterns, target.alert_patterns, check.ingested_present):
-            insert_source(conn, row["id"], spec)
+    apply_wizard_sources(conn, row["id"], sources, suggest_sources(target.log_patterns, target.alert_patterns, check.ingested_present))
     set_value(conn, ACTIVE_CONNECTION, row["id"])
     if previous and previous["id"] != row["id"]:
         store.delete(previous["credential_ref"])
         cancel_queued(conn, [s["id"] for s in list_sources(conn, previous["id"])], "Đã chuyển sang kết nối ELK khác")
     return row, previous
+
+
+def apply_wizard_sources(conn: psycopg.Connection, connection_id: int, sources: list[dict], specs: list[dict]) -> None:
+    """The wizard owns the index patterns of the sources it creates (one for logs, one for alerts).
+
+    Saving again with other patterns used to keep the old ones silently. Checkpoints stay: indices added by a new
+    pattern are read from the current watermark on, and the wizard's history step fetches older documents.
+    Sources under other names belong to PUT /config/sources and are left alone."""
+    existing = {s["name"]: s for s in sources}
+    for spec in specs:
+        old = existing.get(spec["name"])
+        if old is None:
+            insert_source(conn, connection_id, spec)
+        elif list(old["index_patterns"]) != list(spec["index_patterns"]):
+            conn.execute("UPDATE source_configs SET index_patterns = %s WHERE id = %s", (list(spec["index_patterns"]), old["id"]))
 
 
 def forget_connection(conn: psycopg.Connection, store) -> dict | None:

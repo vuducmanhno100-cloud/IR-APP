@@ -74,6 +74,7 @@ def plan_initial_history(conn: psycopg.Connection, source: dict, settings: dict,
 
 
 def prepare_checkpoint(conn: psycopg.Connection, source: dict, settings: dict, now: datetime) -> dict:
+    config.lock_plans(conn, [source["id"]])
     cp = config.ensure_checkpoint(conn, source["id"])
     if cp["ingest_watermark"] is None:
         start = initial_watermark(source, settings, now)
