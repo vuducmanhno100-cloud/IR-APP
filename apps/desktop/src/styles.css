@@ -196,12 +196,56 @@ textarea {
   align-self: end;
 }
 
+/* Validation messages and confirmations span the form instead of taking one field's cell. */
+.form > .notice {
+  grid-column: 1 / -1;
+}
+
+.form label.inline {
+  flex-direction: row;
+  align-items: flex-start;
+  color: var(--text);
+}
+
+.form label.inline input {
+  margin-top: 3px;
+}
+
 .search-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.search-main {
   display: grid;
-  grid-template-columns: minmax(120px, 0.55fr) minmax(140px, 0.65fr) minmax(220px, 1fr) auto;
+  grid-template-columns: minmax(150px, 0.6fr) minmax(170px, 0.7fr) minmax(220px, 1.4fr) auto;
   gap: 8px;
   align-items: end;
-  margin-bottom: 12px;
+}
+
+.search-filters,
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  align-items: end;
+  margin-bottom: 8px;
+}
+
+.search-form label,
+.filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.search-filters input,
+.filters input {
+  width: 170px;
 }
 
 .search-form input,
@@ -299,6 +343,7 @@ tr.hl {
   background: #e8eef2;
   color: var(--text);
   margin-right: 4px;
+  white-space: nowrap;
 }
 
 .badge.ok {
@@ -342,6 +387,13 @@ tr.hl {
   color: var(--bad);
 }
 
+.banners {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
 .banner {
   display: flex;
   gap: 12px;
@@ -351,6 +403,20 @@ tr.hl {
   padding: 10px 14px;
   border-radius: 8px;
   margin-bottom: 16px;
+}
+
+.banners .banner {
+  margin-bottom: 0;
+}
+
+.banner > span {
+  flex: 1;
+}
+
+.banner.warn {
+  background: #fdf3e1;
+  color: var(--text);
+  border: 1px solid #f0c987;
 }
 
 .banner strong {
@@ -478,6 +544,15 @@ td.overflow-cell {
   min-width: 14em;
 }
 
+/* Encoded PowerShell runs to thousands of characters: lists show the start, the event page shows all of it. */
+.clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  overflow: hidden;
+}
+
 td.nowrap {
   white-space: nowrap;
 }
@@ -579,5 +654,170 @@ td.nowrap {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* Clickable rows open a detail screen. */
+tr.clickable {
+  cursor: pointer;
+}
+
+button.link {
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--info);
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+button.link:hover:not(:disabled) {
+  background: none;
+  color: var(--accent);
+}
+
+.button-danger {
+  background: var(--bad);
+  border-color: var(--bad);
+  color: #fff;
+}
+
+.button-danger:hover:not(:disabled) {
+  background: #8f1e18;
+  border-color: #8f1e18;
+  color: #fff;
+}
+
+.notice-actions {
+  margin-top: 8px;
+}
+
+.list-footer {
+  margin-top: 10px;
+}
+
+.tree-options {
+  margin-bottom: 8px;
+  gap: 16px;
+}
+
+.tree-options select {
+  margin-left: 6px;
+}
+
+ul.warnings {
+  margin: 4px 0 8px;
+  padding-left: 18px;
+  color: var(--muted);
+}
+
+.proc.selected {
+  box-shadow: 0 0 0 3px rgba(31, 95, 168, 0.35);
+}
+
+.selected-process {
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--info);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin: 8px 0 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.add-to-case {
+  position: relative;
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+}
+
+/* Fixed widths so all seven columns fit: one pattern per line, numbers a few digits wide. */
+.sources-table textarea {
+  min-width: 22em;
+  white-space: pre;
+  overflow-x: auto;
+}
+
+.sources-table input[type="number"] {
+  width: 7em;
+  min-width: 0;
+}
+
+.sources-table input[type="checkbox"] {
+  min-width: 0;
+}
+
+.sources-table th:first-child,
+.sources-table td:first-child {
+  width: 3em;
+  text-align: center;
+}
+
+/* A popover, so opening it does not stretch the header or panel the button sits in. */
+.add-to-case-form {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 30;
+  width: min(440px, 90vw);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px;
+  background: var(--panel);
+  box-shadow: 0 10px 28px rgba(19, 38, 61, 0.18);
+  grid-template-columns: 1fr;
+}
+
+.section > header .add-to-case-form {
+  left: auto;
+  right: 0;
+}
+
+.case-form {
+  grid-template-columns: minmax(200px, 260px) 1fr;
+  align-items: start;
+}
+
+.case-form .form-actions {
+  grid-column: 1 / -1;
+}
+
+.field-hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.meter {
+  height: 10px;
+  background: #e7eef2;
+  border-radius: 5px;
+  overflow: hidden;
+  margin: 4px 0 12px;
+  max-width: 520px;
+}
+
+.meter > span {
+  display: block;
+  height: 100%;
+  background: var(--ok);
+}
+
+.meter > span.warn {
+  background: var(--warn);
+}
+
+.meter > span.bad {
+  background: var(--bad);
+}
+
+@media (max-width: 900px) {
+  .search-main {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .case-form {
+    grid-template-columns: 1fr;
   }
 }

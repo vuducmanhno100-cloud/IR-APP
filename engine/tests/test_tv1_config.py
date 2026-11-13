@@ -187,6 +187,28 @@ def test_new_key_for_same_cluster_reuses_checkpoints_other_cluster_starts_fresh(
     assert h.store.get(elk_ref("fake-cluster-uuid")) is None and h.store.get(elk_ref("other-cluster")) == "rotated-key"
 
 
+def test_saving_again_applies_the_wizard_patterns_to_its_sources(h, fake):
+    """The wizard's index fields used to matter only the first time; a later save kept the old patterns silently."""
+    h.configure()
+    sysmon = h.source_id("sysmon")
+    h.execute("INSERT INTO sync_checkpoints (source_id, ingest_watermark) VALUES (%s, '2026-10-30T03:00:00Z')", (sysmon,))
+    h.execute(
+        "INSERT INTO source_configs (connection_id, name, kind, index_patterns, timestamp_strategy, timestamp_field)"
+        " SELECT connection_id, 'custom', 'log', ARRAY['logs-custom-*'], 'EVENT_TIME', '@timestamp' FROM source_configs WHERE id = %s",
+        (sysmon,),
+    )
+    patterns = ["logs-windows.sysmon_operational-*", "logs-windows.powershell*"]
+    body = connection_input(index_patterns={"log": patterns, "alert": [".alerts-security.alerts-default"]})
+    saved = h.api.put("/config/elk", json=body)
+    assert_conforms(saved, "saveElkConnection")
+    assert saved.status_code == 200
+    by_name = {s["name"]: s for s in h.api.get("/config/sources").json()}
+    assert by_name["sysmon"]["index_patterns"] == patterns
+    assert by_name["custom"]["index_patterns"] == ["logs-custom-*"]
+    assert h.source_id("sysmon") == sysmon
+    assert h.checkpoint(sysmon)["ingest_watermark"] == datetime(2026, 10, 30, 3, 0, tzinfo=timezone.utc)
+
+
 def test_replace_sources(h):
     not_configured = h.api.put("/config/sources", json=[])
     assert_conforms(not_configured, "replaceSources")
