@@ -1,6 +1,7 @@
 import { call, engine } from "../api/client";
 import { useLoad } from "../api/useLoad";
 import { Badge, EmptyState, ErrorView, Loading, Section, Time } from "../components/common";
+import { formatDuration } from "../labels";
 
 export function Health() {
   const health = useLoad(async () => call((await engine()).GET("/system/health")), []);
@@ -16,7 +17,7 @@ export function Health() {
               <tr>
                 <th>Trạng thái</th>
                 <td>
-                  <Badge tone={h.status === "ok" ? "ok" : "warn"}>{h.status}</Badge>
+                  <Badge tone={h.status === "ok" ? "ok" : "warn"}>{h.status === "ok" ? "Hoạt động bình thường" : h.status}</Badge>
                 </td>
               </tr>
               <tr>
@@ -28,18 +29,18 @@ export function Health() {
               <tr>
                 <th>Database</th>
                 <td>
-                  {h.db.status}, schema v{h.db.schema_version ?? "?"}
+                  {h.db.status === "up" ? "Đang chạy" : h.db.status}, schema v{h.db.schema_version ?? "?"}
                 </td>
               </tr>
               <tr>
                 <th>Uptime</th>
-                <td>{h.uptime_s}s</td>
+                <td>{formatDuration(h.uptime_s)}</td>
               </tr>
               {Object.entries(h.workers ?? {}).map(([name, w]) => (
                 <tr key={name}>
                   <th>Worker {name}</th>
                   <td className="overflow-cell">
-                    <Badge tone={w.state === "running" ? "ok" : "warn"}>{w.state}</Badge> lần chạy cuối <Time value={w.last_tick} />
+                    <Badge tone={w.state === "running" ? "ok" : "warn"}>{w.state === "running" ? "Đang chạy" : w.state}</Badge> lần chạy cuối <Time value={w.last_tick} />
                     {w.last_error && <span className="error-text"> {w.last_error}</span>}
                   </td>
                 </tr>

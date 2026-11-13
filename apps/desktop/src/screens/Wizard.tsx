@@ -17,9 +17,20 @@ const RANGES = [
 ] as const;
 type Range = (typeof RANGES)[number]["value"] | "custom" | "none";
 
+// Sources the wizard creates (elk/probe.py suggest_sources); their patterns follow the fields below.
+const LOG_SOURCE = "sysmon";
+const ALERT_SOURCE = "security-alerts";
+
 function localInput(date: Date): string {
   const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60000);
   return shifted.toISOString().slice(0, 16);
+}
+
+function splitPatterns(text: string): string[] {
+  return text
+    .split(/[\n,]/)
+    .map((p) => p.trim())
+    .filter(Boolean);
 }
 
 export function Wizard({ onSaved }: { onSaved: () => void }) {
@@ -36,6 +47,7 @@ export function Wizard({ onSaved }: { onSaved: () => void }) {
 
   const existing = useLoad(async () => call((await engine()).GET("/config/elk")), []);
   const settings = useLoad(async () => call((await engine()).GET("/config/settings")), []);
+  const sources = useLoad(async () => (existing.data ? call((await engine()).GET("/config/sources")) : []), [existing.data]);
   const firstConnection = !existing.loading && !existing.data;
   const [range, setRange] = useState<Range>("24h");
   const [customFrom, setCustomFrom] = useState(() => localInput(new Date(Date.now() - 24 * HOUR)));
@@ -45,8 +57,18 @@ export function Wizard({ onSaved }: { onSaved: () => void }) {
 
   useEffect(() => setResult(undefined), [url, apiKey, fingerprint, caPem, clusterName, logPattern, alertPattern]);
   useEffect(() => {
-    if (existing.data) setRange("none");
+    if (!existing.data) return;
+    // Show what is saved; only the API key has to be typed again (it never leaves Credential Manager).
+    setRange("none");
+    setUrl(existing.data.url);
+    setFingerprint(existing.data.ca_fingerprint ?? "");
+    setClusterName(existing.data.cluster_name ?? "");
   }, [existing.data]);
+  useEffect(() => {
+    const byName = new Map((sources.data ?? []).map((s) => [s.name, s.index_patterns.join(", ")]));
+    if (byName.has(LOG_SOURCE)) setLogPattern(byName.get(LOG_SOURCE)!);
+    if (byName.has(ALERT_SOURCE)) setAlertPattern(byName.get(ALERT_SOURCE)!);
+  }, [sources.data]);
   useEffect(() => {
     if (settings.data) setQuotaGb(Math.round(settings.data.quota_bytes / GB));
   }, [settings.data]);
@@ -57,7 +79,7 @@ export function Wizard({ onSaved }: { onSaved: () => void }) {
     ca_fingerprint: fingerprint || undefined,
     ca_pem: caPem || undefined,
     cluster_name: clusterName || undefined,
-    index_patterns: { log: [logPattern], alert: [alertPattern] },
+    index_patterns: { log: splitPatterns(logPattern), alert: splitPatterns(alertPattern) },
   });
 
   const retentionDays = settings.data?.retention_days ?? 30;
@@ -140,8 +162,9 @@ export function Wizard({ onSaved }: { onSaved: () => void }) {
     }
   }
 
-  const logCount = estimate?.filter((c) => c.pattern !== alertPattern).reduce((sum, c) => sum + (c.history_count ?? 0), 0);
-  const alertCount = estimate?.find((c) => c.pattern === alertPattern)?.history_count ?? 0;
+  const alertPatterns = new Set(splitPatterns(alertPattern));
+  const logCount = estimate?.filter((c) => !alertPatterns.has(c.pattern)).reduce((sum, c) => sum + (c.history_count ?? 0), 0);
+  const alertCount = estimate?.filter((c) => alertPatterns.has(c.pattern)).reduce((sum, c) => sum + (c.history_count ?? 0), 0) ?? 0;
   const estimatedGb = logCount !== undefined ? ((logCount + alertCount) * BYTES_PER_EVENT) / GB : undefined;
   const overQuota = estimatedGb !== undefined && quotaGb !== undefined && estimatedGb > quotaGb * 0.9;
 
@@ -170,13 +193,18 @@ export function Wizard({ onSaved }: { onSaved: () => void }) {
             <input value={clusterName} onChange={(e) => setClusterName(e.target.value)} />
           </label>
           <label>
-            Index log
+            Index log (nhiều pattern cách nhau bằng dấu phẩy)
             <input value={logPattern} onChange={(e) => setLogPattern(e.target.value)} />
           </label>
           <label>
-            Index alert
+            Index alert (nhiều pattern cách nhau bằng dấu phẩy)
             <input value={alertPattern} onChange={(e) => setAlertPattern(e.target.value)} />
           </label>
+          {existing.data && (
+            <p className="muted">
+              Đang có kết nối: nhập lại API key để kiểm tra. Pattern ở đây áp dụng cho source "{LOG_SOURCE}" và "{ALERT_SOURCE}"; source khác chỉnh ở Đồng bộ › Cấu hình source.
+            </p>
+          )}
           <div className="row form-actions">
             <button disabled={busy}>Kiểm tra</button>
           </div>
