@@ -116,6 +116,9 @@ def search(conn, type, value, match, from_, to, host, event_code, cursor, limit)
         value = value.rstrip(".")
     if type == "process_guid":
         value = value.strip("{}")
+    if not value:
+        # "{}" or "." would otherwise become an empty prefix and match every term of the type.
+        invalid("Giá trị tìm kiếm trống sau khi chuẩn hóa")
     low, high = timestamp(from_), timestamp(to)
     if low and high and low >= high:
         invalid("from must precede to")
@@ -146,7 +149,7 @@ def search(conn, type, value, match, from_, to, host, event_code, cursor, limit)
     for clause, val in [
         ("r.event_time >= %s", low),
         ("r.event_time < %s", high),
-        ("h.host_name=%s", host),
+        ("lower(h.host_name)=lower(%s)", host),
         ("r.event_code=%s", event_code),
     ]:
         if val is not None:
@@ -171,11 +174,20 @@ def search(conn, type, value, match, from_, to, host, event_code, cursor, limit)
     }
 
 
-def node(conn, row, depth=0, collapsed=0):
-    counts = {
-        r["link_type"]: r["n"]
-        for r in conn.execute("SELECT link_type,count(*) n FROM event_process_links WHERE process_id=%s GROUP BY link_type", (row["id"],))
-    }
+def event_counts(conn, process_ids):
+    """Linked events per process and link type, for many processes in one query."""
+    counts = {pid: {} for pid in process_ids}
+    for r in conn.execute(
+        "SELECT process_id,link_type,count(*) n FROM event_process_links WHERE process_id=ANY(%s) GROUP BY process_id,link_type",
+        (list(process_ids),),
+    ):
+        counts[r["process_id"]][r["link_type"]] = r["n"]
+    return counts
+
+
+def node(conn, row, depth=0, collapsed=0, counts=None):
+    if counts is None:
+        counts = event_counts(conn, [row["id"]])[row["id"]]
     keys = (
         "id",
         "host_name",
@@ -245,7 +257,7 @@ def trace(conn, event_id=None, process_id=None, max_depth=3, max_nodes=500, incl
         "SELECT 1 FROM unresolved_relations WHERE host_id=%s AND status IN ('OPEN','CONFLICT') AND target_guid=ANY(%s) LIMIT 1",
         (focus["host_id"], [r["process_guid"] for r in rows]),
     ).fetchone()
-    pending = conn.execute("SELECT 1 FROM raw_events WHERE host_id=%s AND process_state='PENDING' LIMIT 1", (focus["host_id"],)).fetchone()
+    pending = pending_in_lifetime(conn, focus["host_id"], rows)
     complete = (
         "MISSING_PARENT"
         if root["is_placeholder"] or unresolved
@@ -256,14 +268,19 @@ def trace(conn, event_id=None, process_id=None, max_depth=3, max_nodes=500, incl
         else "COMPLETE"
     )
     related = conn.execute(
-        "SELECT r.*,l.process_id,l.link_type FROM raw_events r JOIN event_process_links l ON l.event_id=r.id WHERE l.process_id=ANY(%s) ORDER BY r.event_time DESC,r.id DESC LIMIT 200",
-        (ids,),
+        "SELECT r.*,l.process_id,l.link_type FROM raw_events r JOIN event_process_links l ON l.event_id=r.id WHERE l.process_id=ANY(%s) ORDER BY r.event_time DESC,r.id DESC LIMIT %s",
+        (ids, RELATED_LIMIT + 1),
     ).fetchall()
+    warnings = [COVERAGE_WARNING]
+    if len(related) > RELATED_LIMIT:
+        related = related[:RELATED_LIMIT]
+        warnings.append(f"Chỉ hiện {RELATED_LIMIT} event liên quan mới nhất của các process trong cây")
+    counts = event_counts(conn, ids)
     return {
         **empty,
         "focus_process_id": process_id,
         "root_id": root["id"],
-        "nodes": [node(conn, r, shape.depth_by_id[r["id"]], shape.collapsed[r["id"]]) for r in rows],
+        "nodes": [node(conn, r, shape.depth_by_id[r["id"]], shape.collapsed[r["id"]], counts[r["id"]]) for r in rows],
         "edges": edges,
         "related_events": [
             dict(
@@ -277,8 +294,28 @@ def trace(conn, event_id=None, process_id=None, max_depth=3, max_nodes=500, incl
             for r in related
         ],
         "completeness": complete,
-        "warnings": ["Coverage is limited to locally collected data."],
+        "warnings": warnings,
     }
+
+
+RELATED_LIMIT = 200
+COVERAGE_WARNING = "Chỉ gồm dữ liệu đã đồng bộ về máy này"
+
+
+def pending_in_lifetime(conn, host_id, rows):
+    """An unprocessed event can only change this tree if it happened while one of its processes was alive.
+
+    Checking the whole host flagged nearly every tree as PENDING_DATA while a sync was running."""
+    starts = [r["started_at"] for r in rows if r["started_at"] is not None]
+    ends = [r["ended_at"] for r in rows if not r["is_placeholder"]]
+    clauses, args = ["host_id=%s", "process_state='PENDING'"], [host_id]
+    if starts:
+        clauses.append("event_time >= %s")
+        args.append(min(starts))
+    if ends and all(e is not None for e in ends):
+        clauses.append("event_time <= %s")
+        args.append(max(ends))
+    return conn.execute("SELECT 1 FROM raw_events WHERE " + " AND ".join(clauses) + " LIMIT 1", args).fetchone() is not None
 
 
 def alerts(conn, severity=None, status=None, from_=None, to=None, cursor=None, limit=100):
@@ -305,16 +342,27 @@ def alerts(conn, severity=None, status=None, from_=None, to=None, cursor=None, l
     ).fetchall()
     more = len(rows) > limit
     rows = rows[:limit]
+    refs = {
+        row["event_id"]: [
+            (row["cluster_key"], normalize_index(r.get("index", "")), r.get("id")) for r in row.pop("original_event_ref") or []
+        ]
+        for row in rows
+    }
+    keys = {key for keys in refs.values() for key in keys}
+    found = {}
+    if keys:
+        clusters, indexes, ids = (list(column) for column in zip(*keys, strict=True))
+        found = {
+            (r["cluster_key"], r["index_name"], r["elastic_id"]): r["id"]
+            for r in conn.execute(
+                "SELECT r.id,r.cluster_key,r.index_name,r.elastic_id FROM raw_events r"
+                " JOIN unnest(%s::text[],%s::text[],%s::text[]) AS k(c,i,e) ON r.cluster_key=k.c AND r.index_name=k.i AND r.elastic_id=k.e",
+                (clusters, indexes, ids),
+            )
+        }
     for row in rows:
-        row["original_event_id"] = None
-        for ref in row.pop("original_event_ref") or []:
-            found = conn.execute(
-                "SELECT id FROM raw_events WHERE cluster_key=%s AND index_name=%s AND elastic_id=%s",
-                (row["cluster_key"], normalize_index(ref.get("index", "")), ref.get("id")),
-            ).fetchone()
-            if found:
-                row["original_event_id"] = found["id"]
-                break
+        # The first reference that was synced wins, as before.
+        row["original_event_id"] = next((found[k] for k in refs[row["event_id"]] if k in found), None)
         row.pop("cluster_key")
     return dict(items=rows, next_cursor=cursor_encode([rows[-1]["alert_time"], rows[-1]["event_id"]]) if more else None)
 
